@@ -43,6 +43,15 @@ do {
     totalFailed += 1
 }
 
+// Test Suite 5: Acceptance & Edge-Case Resilience (Fallback models, offline recovery, missed run catchup, session persistence)
+do {
+    try await AcceptanceTests.runAll()
+    totalPassed += 1
+} catch {
+    print("❌ AcceptanceTests failed with error: \(error)")
+    totalFailed += 1
+}
+
 print("\n==========================================")
 print(" Test Summary: \(totalPassed) suite(s) passed, \(totalFailed) suite(s) failed")
 print("==========================================")
