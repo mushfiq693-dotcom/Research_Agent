@@ -1,0 +1,29 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+
+# Xcode & Swift
+build/
+DerivedData/
+*.xcuserstate
+project.xcworkspace/xcuserdata/
+*.xcuserdatad/
+.swiftpm/
+.build/
+
+# Environments & Secrets
+.env
+.env.*
+*.key
+*.token
+*.p8
+*.p12
+
+# Output files & local runtime caches
+~/Documents/Personal Research Agent/
+reports/
+logs/
+cache/
+scratch/
