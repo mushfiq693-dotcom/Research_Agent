@@ -89,6 +89,8 @@ public final class AppState: ObservableObject {
     @Published public var manualTopicInput: String = ""
     @Published public var lastReportPath: String?
     
+    public var onManualResearchRequested: (@MainActor (String) -> Void)?
+    
     private init() {}
     
     // MARK: - Actions
@@ -105,11 +107,15 @@ public final class AppState: ObservableObject {
         isShowingManualInput = false
         manualTopicInput = ""
         
-        Task {
-            do {
-                _ = try await ResearchAgent.shared.executeResearch(topicOverride: topicToRun)
-            } catch {
-                logger.error("Manual research execution failed: \(error.localizedDescription)")
+        if let handler = onManualResearchRequested {
+            handler(topicToRun)
+        } else {
+            Task {
+                do {
+                    _ = try await ResearchAgent.shared.executeResearch(topicOverride: topicToRun)
+                } catch {
+                    logger.error("Manual research execution failed: \(error.localizedDescription)")
+                }
             }
         }
     }

@@ -34,6 +34,15 @@ do {
     totalFailed += 1
 }
 
+// Test Suite 4: Scheduler, WakeObserver, Missed Runs, Notification Categories
+do {
+    try await SchedulerAndNotificationTests.runAll()
+    totalPassed += 1
+} catch {
+    print("❌ SchedulerAndNotificationTests failed with error: \(error)")
+    totalFailed += 1
+}
+
 print("\n==========================================")
 print(" Test Summary: \(totalPassed) suite(s) passed, \(totalFailed) suite(s) failed")
 print("==========================================")

@@ -8,6 +8,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     public func applicationDidFinishLaunching(_ notification: Notification) {
         // Enforce accessory activation policy so app doesn't show an icon in the macOS Dock
         NSApp.setActivationPolicy(.accessory)
+        
+        // Start background scheduling, wake observation, and notifications
+        Task { @MainActor in
+            RunCoordinator.shared.start()
+        }
     }
     
     @MainActor

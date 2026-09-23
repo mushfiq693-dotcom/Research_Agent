@@ -48,6 +48,6 @@ public final class ConnectivityMonitor: ObservableObject {
     }
     
     public func checkCurrentConnection() -> Bool {
-        return isConnected && monitor.currentPath.status != .unsatisfied
+        return isConnected
     }
 }
