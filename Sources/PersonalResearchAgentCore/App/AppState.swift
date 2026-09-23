@@ -89,9 +89,6 @@ public final class AppState: ObservableObject {
     @Published public var manualTopicInput: String = ""
     @Published public var lastReportPath: String?
     
-    // Callback hook for manual research trigger (connected in Phase 4 / RunCoordinator)
-    public var onManualResearchRequested: (@MainActor (String) -> Void)?
-    
     private init() {}
     
     // MARK: - Actions
@@ -108,12 +105,12 @@ public final class AppState: ObservableObject {
         isShowingManualInput = false
         manualTopicInput = ""
         
-        if let handler = onManualResearchRequested {
-            handler(topicToRun)
-        } else {
-            // Default placeholder simulation for Phase 2 UI test
-            self.status = .researching(step: .planning)
-            self.isResearching = true
+        Task {
+            do {
+                _ = try await ResearchAgent.shared.executeResearch(topicOverride: topicToRun)
+            } catch {
+                logger.error("Manual research execution failed: \(error.localizedDescription)")
+            }
         }
     }
     
@@ -140,7 +137,6 @@ public final class AppState: ObservableObject {
     }
     
     public func openSettingsWindow() {
-        // Activate app so window comes to front
         NSApplication.shared.activate(ignoringOtherApps: true)
         self.isShowingSettings = true
     }

@@ -25,6 +25,15 @@ do {
     totalFailed += 1
 }
 
+// Test Suite 3: Agent Loop, Security, Prompt Injection, URL Whitelist, ReportWriter, Memory
+do {
+    try await AgentTests.runAll()
+    totalPassed += 1
+} catch {
+    print("❌ AgentTests failed with error: \(error)")
+    totalFailed += 1
+}
+
 print("\n==========================================")
 print(" Test Summary: \(totalPassed) suite(s) passed, \(totalFailed) suite(s) failed")
 print("==========================================")

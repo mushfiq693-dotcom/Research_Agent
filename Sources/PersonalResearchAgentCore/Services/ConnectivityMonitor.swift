@@ -27,7 +27,7 @@ public final class ConnectivityMonitor: ObservableObject {
         monitor.pathUpdateHandler = { [weak self] path in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
-                let connected = (path.status == .satisfied)
+                let connected = (path.status != .unsatisfied)
                 let expensive = path.isExpensive
                 let constrained = path.isConstrained
                 
@@ -48,6 +48,6 @@ public final class ConnectivityMonitor: ObservableObject {
     }
     
     public func checkCurrentConnection() -> Bool {
-        return monitor.currentPath.status == .satisfied
+        return isConnected && monitor.currentPath.status != .unsatisfied
     }
 }
