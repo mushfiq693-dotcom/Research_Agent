@@ -21,7 +21,7 @@ public actor ResearchAgent {
     public func executeResearch(
         topicOverride: String? = nil,
         aiProvider: AIProvider = OpenRouterProvider.shared,
-        searchProvider: SearchProvider = BraveSearchProvider.shared,
+        searchProvider: SearchProvider = UnifiedSearchProvider.shared,
         pageFetcher: PageFetcherProtocol = PageFetcher.shared
     ) async throws -> URL {
         // Enforce no overlapping runs

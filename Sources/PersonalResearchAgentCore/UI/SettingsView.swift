@@ -11,8 +11,10 @@ public struct SettingsView: View {
     @State private var isShowingBraveKey: Bool = false
     @State private var openRouterStatusMessage: String?
     @State private var braveStatusMessage: String?
+    @State private var freeSearchStatusMessage: String?
     @State private var isTestingOpenRouter: Bool = false
     @State private var isTestingBrave: Bool = false
+    @State private var isTestingFreeSearch: Bool = false
     @State private var selectedTab: Int = 0
     @State private var isRefreshingModels: Bool = false
     @State private var modelCatalogMessage: String?
@@ -223,39 +225,73 @@ public struct SettingsView: View {
                 }
             }
             
-            Section("Brave Search Provider") {
-                HStack {
-                    if isShowingBraveKey {
-                        TextField("BSA...", text: $braveKeyInput)
-                            .textFieldStyle(.roundedBorder)
-                    } else {
-                        SecureField("••••••••••••••••••••••••", text: $braveKeyInput)
-                            .textFieldStyle(.roundedBorder)
+            Section("Web Search Engine") {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Image(systemName: "checkmark.seal.fill")
+                            .foregroundStyle(.green)
+                        Text("Built-in Free Search (DuckDuckGo)")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                        Spacer()
+                        Button("Test Free Search") {
+                            testFreeSearch()
+                        }
+                        .controlSize(.small)
+                        .disabled(isTestingFreeSearch)
                     }
-                    
-                    Button {
-                        isShowingBraveKey.toggle()
-                    } label: {
-                        Image(systemName: isShowingBraveKey ? "eye.slash" : "eye")
-                    }
-                    .buttonStyle(.plain)
-                    
-                    Button("Save") {
-                        saveBraveKey()
-                    }
-                    .controlSize(.small)
-                    
-                    Button("Test") {
-                        testBraveKey()
-                    }
-                    .controlSize(.small)
-                    .disabled(isTestingBrave)
-                }
-                
-                if let msg = braveStatusMessage {
-                    Text(msg)
+                    Text("Zero-configuration: No API key or credit card needed.")
                         .font(.caption)
-                        .foregroundStyle(msg.contains("Success") ? .green : .red)
+                        .foregroundStyle(.secondary)
+                    
+                    if let msg = freeSearchStatusMessage {
+                        Text(msg)
+                            .font(.caption)
+                            .foregroundStyle(msg.contains("Success") ? .green : .red)
+                    }
+                }
+                .padding(.vertical, 2)
+                
+                Divider()
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Optional: Brave Search API Key")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    
+                    HStack {
+                        if isShowingBraveKey {
+                            TextField("BSA...", text: $braveKeyInput)
+                                .textFieldStyle(.roundedBorder)
+                        } else {
+                            SecureField("••••••••••••••••••••••••", text: $braveKeyInput)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                        
+                        Button {
+                            isShowingBraveKey.toggle()
+                        } label: {
+                            Image(systemName: isShowingBraveKey ? "eye.slash" : "eye")
+                        }
+                        .buttonStyle(.plain)
+                        
+                        Button("Save") {
+                            saveBraveKey()
+                        }
+                        .controlSize(.small)
+                        
+                        Button("Test") {
+                            testBraveKey()
+                        }
+                        .controlSize(.small)
+                        .disabled(isTestingBrave)
+                    }
+                    
+                    if let msg = braveStatusMessage {
+                        Text(msg)
+                            .font(.caption)
+                            .foregroundStyle(msg.contains("Success") ? .green : .red)
+                    }
                 }
             }
             
@@ -401,6 +437,25 @@ public struct SettingsView: View {
                 braveStatusMessage = "Connection failed: \(error.localizedDescription)"
             }
             isTestingBrave = false
+        }
+    }
+    
+    private func testFreeSearch() {
+        isTestingFreeSearch = true
+        freeSearchStatusMessage = "Testing DuckDuckGo free search..."
+        
+        Task {
+            do {
+                let results = try await DuckDuckGoSearchProvider.shared.searchWeb(query: "Apple Silicon Mac", count: 2)
+                if !results.isEmpty {
+                    freeSearchStatusMessage = "Success: Found \(results.count) live results from Free Search!"
+                } else {
+                    freeSearchStatusMessage = "Warning: 0 results returned."
+                }
+            } catch {
+                freeSearchStatusMessage = "Search error: \(error.localizedDescription)"
+            }
+            isTestingFreeSearch = false
         }
     }
     

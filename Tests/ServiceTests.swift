@@ -18,6 +18,8 @@ public struct ServiceTests {
         try testHTMLExtractionAndSanitization()
         try testModelCatalogFreeLogic()
         try await testDeadURLResilience()
+        try testDuckDuckGoLiteParsing()
+        try await testUnifiedSearchFallback()
         print("✅ ServiceTests passed successfully.")
     }
     
@@ -210,5 +212,53 @@ public struct ServiceTests {
             assert(true)
         }
         print("  ✓ testDeadURLResilience passed")
+    }
+    
+    // MARK: - 8. DuckDuckGo Lite Parsing
+    public static func testDuckDuckGoLiteParsing() throws {
+        let mockDDGHTML = """
+        <html>
+        <body>
+        <table>
+        <tr>
+            <td>
+                <a rel="nofollow" href="https://example.com/swift6" class='result-link'>Swift 6 Concurrency Guide</a>
+            </td>
+        </tr>
+        <tr>
+            <td class='result-snippet'>
+                Learn all about <b>Swift 6</b> concurrency &amp; data race safety.
+            </td>
+        </tr>
+        <tr>
+            <td>
+                <a rel="nofollow" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fapple.com%2Fmacos&rut=123" class='result-link'>macOS Sequoia - Apple</a>
+            </td>
+        </tr>
+        <tr>
+            <td class='result-snippet'>
+                Explore all new features in <b>macOS</b> Sequoia.
+            </td>
+        </tr>
+        </table>
+        </body>
+        </html>
+        """
+        
+        let results = DuckDuckGoSearchProvider.parseDuckDuckGoLiteHTML(mockDDGHTML)
+        assert(results.count == 2, "Should parse 2 search results from DDG HTML")
+        assert(results[0].title == "Swift 6 Concurrency Guide", "Result 1 title match")
+        assert(results[0].url == "https://example.com/swift6", "Result 1 URL match")
+        assert(results[0].snippet.contains("Swift 6 concurrency & data race safety"), "Result 1 snippet cleaned")
+        assert(results[1].url == "https://apple.com/macos", "Result 2 unwrapped URL match")
+        print("  ✓ testDuckDuckGoLiteParsing passed")
+    }
+    
+    // MARK: - 9. Unified Search Fallback
+    public static func testUnifiedSearchFallback() async throws {
+        let results = try await DuckDuckGoSearchProvider.shared.searchGoogleNewsRSS(query: "Apple", count: 2)
+        assert(!results.isEmpty, "Google News RSS fallback should return results")
+        assert(results[0].url.hasPrefix("http"), "Valid URL returned")
+        print("  ✓ testUnifiedSearchFallback passed")
     }
 }
