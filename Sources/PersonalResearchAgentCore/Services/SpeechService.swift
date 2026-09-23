@@ -10,6 +10,7 @@ public final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesize
     private let logger = Logger(subsystem: "com.personalresearchagent.app", category: "SpeechService")
     
     @Published public private(set) var isSpeaking: Bool = false
+    @Published public private(set) var lastSpokenText: String = ""
     
     private override init() {
         super.init()
@@ -20,6 +21,10 @@ public final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesize
     public func speak(text: String, voiceIdentifier: String? = nil, rate: Float = 0.48, pitch: Float = 0.80) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        
+        // Mute voice input while assistant speaks to prevent acoustic self-triggering
+        VoiceInputService.shared.stopListening()
+        lastSpokenText = trimmed.lowercased()
         
         if synthesizer.isSpeaking {
             synthesizer.stopSpeaking(at: .immediate)
@@ -70,6 +75,9 @@ public final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesize
             self.isSpeaking = false
             self.logger.info("Speech finished.")
             if SettingsStore.shared.isVoiceControlEnabled {
+                // Wait 600ms cooldown for speaker echo to dissipate before resuming mic
+                try? await Task.sleep(nanoseconds: 600_000_000)
+                guard !self.isSpeaking, SettingsStore.shared.isVoiceControlEnabled else { return }
                 VoiceInputService.shared.startListening()
             }
         }
@@ -80,6 +88,8 @@ public final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesize
             self.isSpeaking = false
             self.logger.info("Speech cancelled.")
             if SettingsStore.shared.isVoiceControlEnabled {
+                try? await Task.sleep(nanoseconds: 600_000_000)
+                guard !self.isSpeaking, SettingsStore.shared.isVoiceControlEnabled else { return }
                 VoiceInputService.shared.startListening()
             }
         }

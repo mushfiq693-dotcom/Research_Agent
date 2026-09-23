@@ -64,12 +64,7 @@ public final class NotificationService: NSObject, UNUserNotificationCenterDelega
             trigger: nil // Immediate delivery
         )
         
-        UNUserNotificationCenter.current().add(request) { error in
-            if let error = error {
-                Logger(subsystem: "com.personalresearchagent.app", category: "NotificationService")
-                    .warning("Failed to deliver completion notification: \(error.localizedDescription)")
-            }
-        }
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
     }
     
     public func sendFailureNotification(topic: String, reason: String) {
@@ -86,12 +81,7 @@ public final class NotificationService: NSObject, UNUserNotificationCenterDelega
             trigger: nil
         )
         
-        UNUserNotificationCenter.current().add(request) { error in
-            if let error = error {
-                Logger(subsystem: "com.personalresearchagent.app", category: "NotificationService")
-                    .warning("Failed to deliver failure notification: \(error.localizedDescription)")
-            }
-        }
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
     }
     
     public func sendOfflineRetryExhaustedNotification(topic: String) {
