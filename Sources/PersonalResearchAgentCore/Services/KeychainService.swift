@@ -7,6 +7,8 @@ public final class KeychainService: @unchecked Sendable {
     
     private let serviceName = "com.personalresearchagent.keychain"
     private let logger = Logger(subsystem: "com.personalresearchagent.app", category: "KeychainService")
+    private let lock = NSLock()
+    private var cache: [Key: String] = [:]
     
     public enum Key: String, CaseIterable, Sendable {
         case openRouter = "openrouter_api_key"
@@ -48,13 +50,22 @@ public final class KeychainService: @unchecked Sendable {
     }
     
     private init() {
-        // Automatically check and load from .env file if Keychain is currently empty
+        // Automatically preload from environment or local .env into memory
         loadFromEnvFileIfAvailable()
     }
     
     // MARK: - Save Key
     public func saveKey(_ key: Key, value: String) throws {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        lock.lock()
+        if trimmed.isEmpty {
+            cache.removeValue(forKey: key)
+        } else {
+            cache[key] = trimmed
+        }
+        lock.unlock()
+        
         if trimmed.isEmpty {
             try deleteKey(key)
             return
@@ -68,6 +79,7 @@ public final class KeychainService: @unchecked Sendable {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,
             kSecAttrAccount as String: key.rawValue,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
             kSecValueData as String: data
         ]
         
@@ -81,7 +93,8 @@ public final class KeychainService: @unchecked Sendable {
                 kSecAttrAccount as String: key.rawValue
             ]
             let attributesToUpdate: [String: Any] = [
-                kSecValueData as String: data
+                kSecValueData as String: data,
+                kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             ]
             let updateStatus = SecItemUpdate(updateQuery as CFDictionary, attributesToUpdate as CFDictionary)
             guard updateStatus == errSecSuccess else {
@@ -98,6 +111,31 @@ public final class KeychainService: @unchecked Sendable {
     
     // MARK: - Get Key
     public func getKey(_ key: Key) -> String? {
+        lock.lock()
+        if let cached = cache[key], !cached.isEmpty {
+            lock.unlock()
+            return cached
+        }
+        lock.unlock()
+        
+        // 1. Check local .env file first (zero prompt, instant load)
+        if let envVal = readKeyFromEnvFile(key.envVarName), !envVal.isEmpty {
+            lock.lock()
+            cache[key] = envVal
+            lock.unlock()
+            return envVal
+        }
+        
+        // 2. Check Environment variables
+        if let envVal = ProcessInfo.processInfo.environment[key.envVarName], !envVal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let val = envVal.trimmingCharacters(in: .whitespacesAndNewlines)
+            lock.lock()
+            cache[key] = val
+            lock.unlock()
+            return val
+        }
+        
+        // 3. Fallback to Keychain query
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,
@@ -112,21 +150,11 @@ public final class KeychainService: @unchecked Sendable {
         if status == errSecSuccess, let data = dataTypeRef as? Data, let string = String(data: data, encoding: .utf8) {
             let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty {
+                lock.lock()
+                cache[key] = trimmed
+                lock.unlock()
                 return trimmed
             }
-        }
-        
-        // Check Environment variables
-        if let envVal = ProcessInfo.processInfo.environment[key.envVarName], !envVal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let val = envVal.trimmingCharacters(in: .whitespacesAndNewlines)
-            try? saveKey(key, value: val) // Auto-persist to Keychain
-            return val
-        }
-        
-        // Check local .env file
-        if let envVal = readKeyFromEnvFile(key.envVarName), !envVal.isEmpty {
-            try? saveKey(key, value: envVal) // Auto-persist to Keychain
-            return envVal
         }
         
         return nil
@@ -134,6 +162,10 @@ public final class KeychainService: @unchecked Sendable {
     
     // MARK: - Delete Key
     public func deleteKey(_ key: Key) throws {
+        lock.lock()
+        cache.removeValue(forKey: key)
+        lock.unlock()
+        
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: serviceName,
@@ -156,7 +188,9 @@ public final class KeychainService: @unchecked Sendable {
     public func loadFromEnvFileIfAvailable() {
         for key in Key.allCases {
             if let val = readKeyFromEnvFile(key.envVarName), !val.isEmpty {
-                try? saveKey(key, value: val)
+                lock.lock()
+                cache[key] = val
+                lock.unlock()
             }
         }
     }
