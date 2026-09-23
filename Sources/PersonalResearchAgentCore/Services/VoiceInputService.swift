@@ -4,6 +4,51 @@ import AVFoundation
 import AppKit
 import OSLog
 
+// MARK: - Non-Actor Audio Engine Worker
+/// Encapsulates AVAudioEngine so real-time audio tap callbacks run on background audio queues
+/// without triggering Swift 6 @MainActor executor assertions.
+final class AudioEngineManager: @unchecked Sendable {
+    private let audioEngine = AVAudioEngine()
+    private var isTapInstalled = false
+    private weak var currentRequest: SFSpeechAudioBufferRecognitionRequest?
+    
+    func start(request: SFSpeechAudioBufferRecognitionRequest) throws {
+        self.currentRequest = request
+        let inputNode = audioEngine.inputNode
+        
+        if isTapInstalled {
+            inputNode.removeTap(onBus: 0)
+            isTapInstalled = false
+        }
+        
+        audioEngine.reset()
+        
+        let inputFormat = inputNode.inputFormat(forBus: 0)
+        let formatToUse: AVAudioFormat? = (inputFormat.sampleRate > 0 && inputFormat.channelCount > 0) ? inputFormat : nil
+        
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: formatToUse) { [weak self] (buffer: AVAudioPCMBuffer, _: AVAudioTime) in
+            self?.currentRequest?.append(buffer)
+        }
+        isTapInstalled = true
+        
+        audioEngine.prepare()
+        try audioEngine.start()
+    }
+    
+    func stop() {
+        if audioEngine.isRunning {
+            audioEngine.stop()
+        }
+        if isTapInstalled {
+            audioEngine.inputNode.removeTap(onBus: 0)
+            isTapInstalled = false
+        }
+        audioEngine.reset()
+        currentRequest = nil
+    }
+}
+
+// MARK: - VoiceInputService
 @MainActor
 public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecognizerDelegate {
     public static let shared = VoiceInputService()
@@ -13,14 +58,13 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
     private let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
-    private let audioEngine = AVAudioEngine()
+    private let audioManager = AudioEngineManager()
     
     @Published public private(set) var isListening: Bool = false
     @Published public private(set) var liveTranscript: String = ""
     @Published public private(set) var statusMessage: String = "Voiceover ready"
     @Published public private(set) var hasPermissions: Bool = false
     
-    private var isTapInstalled: Bool = false
     private var silenceTimer: Task<Void, Never>?
     private var restartTask: Task<Void, Never>?
     
@@ -92,7 +136,7 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
                 self.isListening = true
                 self.liveTranscript = ""
                 self.statusMessage = "Listening for commands..."
-                self.logger.info("Voice recognition engine started.")
+                self.logger.info("Voice recognition engine started successfully.")
             } catch {
                 self.statusMessage = "Audio session error: \(error.localizedDescription)"
                 self.logger.error("Failed to start audio session: \(error.localizedDescription)")
@@ -139,24 +183,7 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
         request.shouldReportPartialResults = true
         self.recognitionRequest = request
         
-        let inputNode = audioEngine.inputNode
-        let inputFormat = inputNode.inputFormat(forBus: 0)
-        
-        // Safety check on sample rate to prevent CoreAudio assert crashes
-        let formatToUse: AVAudioFormat?
-        if inputFormat.sampleRate > 0 && inputFormat.channelCount > 0 {
-            formatToUse = inputFormat
-        } else {
-            formatToUse = nil
-        }
-        
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: formatToUse) { [weak self] (buffer: AVAudioPCMBuffer, _: AVAudioTime) in
-            self?.recognitionRequest?.append(buffer)
-        }
-        isTapInstalled = true
-        
-        audioEngine.prepare()
-        try audioEngine.start()
+        try audioManager.start(request: request)
         
         recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
             Task { @MainActor [weak self] in
@@ -184,14 +211,7 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
     }
     
     private func cleanupAudioSession() {
-        if audioEngine.isRunning {
-            audioEngine.stop()
-        }
-        
-        if isTapInstalled {
-            audioEngine.inputNode.removeTap(onBus: 0)
-            isTapInstalled = false
-        }
+        audioManager.stop()
         
         recognitionRequest?.endAudio()
         recognitionRequest = nil
