@@ -20,6 +20,7 @@ public struct ServiceTests {
         try await testDeadURLResilience()
         try testDuckDuckGoLiteParsing()
         try await testUnifiedSearchFallback()
+        try testSpeechMarkdownCleaning()
         print("✅ ServiceTests passed successfully.")
     }
     
@@ -260,5 +261,38 @@ public struct ServiceTests {
         assert(!results.isEmpty, "Google News RSS fallback should return results")
         assert(results[0].url.hasPrefix("http"), "Valid URL returned")
         print("  ✓ testUnifiedSearchFallback passed")
+    }
+    
+    // MARK: - 10. Speech Markdown Cleaning & Spoken Formatter
+    public static func testSpeechMarkdownCleaning() throws {
+        let rawMarkdown = """
+        # Today's Brief: Quantum Computing Breakthrough
+        *Date: 24 September 2026*
+        
+        ## Summary
+        Scientists have achieved **major milestones** in [qubit coherence](https://example.com/quantum).
+        
+        * New superconducting chips
+        * Error correction rates improved
+        
+        ```python
+        print("quantum simulation")
+        ```
+        """
+        
+        let cleaned = SpeechService.cleanMarkdownForSpeech(rawMarkdown)
+        assert(!cleaned.contains("#"), "Headers removed")
+        assert(!cleaned.contains("**"), "Bold markers stripped")
+        assert(!cleaned.contains("print(\"quantum"), "Code blocks stripped")
+        assert(cleaned.contains("Scientists have achieved major milestones in qubit coherence"), "Link syntax converted to plain text")
+        
+        let formatted = SpeechService.formatSpokenBriefing(
+            markdown: rawMarkdown,
+            topic: "Quantum Computing",
+            userName: "Mushfiq",
+            assistantName: "Jarvis"
+        )
+        assert(formatted.contains("Hello Mushfiq, this is Jarvis."), "Personalized greeting inserted")
+        print("  ✓ testSpeechMarkdownCleaning passed")
     }
 }

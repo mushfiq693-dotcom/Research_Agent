@@ -128,6 +128,11 @@ public final class SettingsStore: ObservableObject {
         static let delayBetweenCallsSeconds = "pra_delay_between_calls_seconds"
         static let privacyNoticeAcknowledged = "pra_privacy_notice_ack"
         static let debugIntervalMode = "pra_debug_interval_mode"
+        static let userName = "pra_user_name"
+        static let assistantName = "pra_assistant_name"
+        static let autoReadAloud = "pra_auto_read_aloud"
+        static let voiceRate = "pra_voice_rate"
+        static let preferredVoiceId = "pra_preferred_voice_id"
     }
     
     // MARK: - Published Properties
@@ -199,6 +204,26 @@ public final class SettingsStore: ObservableObject {
         didSet { defaults.set(isDebugIntervalMode, forKey: Keys.debugIntervalMode) }
     }
     
+    @Published public var userName: String {
+        didSet { defaults.set(userName, forKey: Keys.userName) }
+    }
+    
+    @Published public var assistantName: String {
+        didSet { defaults.set(assistantName, forKey: Keys.assistantName) }
+    }
+    
+    @Published public var autoReadAloudOnCompletion: Bool {
+        didSet { defaults.set(autoReadAloudOnCompletion, forKey: Keys.autoReadAloud) }
+    }
+    
+    @Published public var voiceRate: Float {
+        didSet { defaults.set(voiceRate, forKey: Keys.voiceRate) }
+    }
+    
+    @Published public var preferredVoiceIdentifier: String {
+        didSet { defaults.set(preferredVoiceIdentifier, forKey: Keys.preferredVoiceId) }
+    }
+    
     // MARK: - Initializer
     private init() {
         let presetStr = defaults.string(forKey: Keys.topicPreset) ?? TopicPreset.aiNews.rawValue
@@ -237,6 +262,12 @@ public final class SettingsStore: ObservableObject {
         self.delayBetweenCallsSeconds = defaults.object(forKey: Keys.delayBetweenCallsSeconds) != nil ? defaults.double(forKey: Keys.delayBetweenCallsSeconds) : 2.0
         self.privacyNoticeAcknowledged = defaults.bool(forKey: Keys.privacyNoticeAcknowledged)
         self.isDebugIntervalMode = defaults.bool(forKey: Keys.debugIntervalMode)
+        
+        self.userName = defaults.string(forKey: Keys.userName) ?? "Mushfiq"
+        self.assistantName = defaults.string(forKey: Keys.assistantName) ?? "Jarvis"
+        self.autoReadAloudOnCompletion = defaults.bool(forKey: Keys.autoReadAloud)
+        self.voiceRate = defaults.object(forKey: Keys.voiceRate) != nil ? defaults.float(forKey: Keys.voiceRate) : 0.5
+        self.preferredVoiceIdentifier = defaults.string(forKey: Keys.preferredVoiceId) ?? ""
     }
     
     // MARK: - Effective Active Topic

@@ -36,14 +36,20 @@ public struct SettingsView: View {
                 }
                 .tag(1)
             
+            voiceAndAudioTab
+                .tabItem {
+                    Label("Voice & Audio", systemImage: "waveform")
+                }
+                .tag(2)
+            
             privacyTab
                 .tabItem {
                     Label("Privacy & Notice", systemImage: "hand.raised.fill")
                 }
-                .tag(2)
+                .tag(3)
         }
         .padding(20)
-        .frame(width: 540, height: 480)
+        .frame(width: 540, height: 500)
         .onAppear {
             loadKeyPlaceholders()
             launchAtLogin.refreshStatus()
@@ -298,6 +304,49 @@ public struct SettingsView: View {
             Section("Agent Timing Limits") {
                 Stepper("Retry Delay: \(settings.retryDelayMinutes) min", value: $settings.retryDelayMinutes, in: 1...60)
                 Stepper("Delay Between Model Calls: \(String(format: "%.1f", settings.delayBetweenCallsSeconds)) s", value: $settings.delayBetweenCallsSeconds, in: 0.5...10.0, step: 0.5)
+            }
+        }
+        .formStyle(.grouped)
+    }
+    
+    // MARK: - Voice & Audio Tab
+    private var voiceAndAudioTab: some View {
+        Form {
+            Section("Assistant & User Identity") {
+                TextField("Your Name:", text: $settings.userName)
+                    .textFieldStyle(.roundedBorder)
+                TextField("Assistant Wake/Display Name:", text: $settings.assistantName)
+                    .textFieldStyle(.roundedBorder)
+            }
+            
+            Section("Audio Briefing (Voice Read-Aloud)") {
+                Toggle("Auto Read-Aloud on Research Completion", isOn: $settings.autoReadAloudOnCompletion)
+                
+                Picker("Voice:", selection: $settings.preferredVoiceIdentifier) {
+                    Text("Default Natural Voice").tag("")
+                    ForEach(SpeechService.availableVoices(), id: \.identifier) { voice in
+                        Text("\(voice.name) (\(voice.language))").tag(voice.identifier)
+                    }
+                }
+                
+                HStack {
+                    Text("Speech Speed:")
+                    Slider(value: $settings.voiceRate, in: 0.3...0.7, step: 0.05)
+                    Text(String(format: "%.2fx", settings.voiceRate / 0.5))
+                        .monospacedDigit()
+                        .frame(width: 45)
+                }
+                
+                Button {
+                    SpeechService.shared.speak(
+                        text: "Hello \(settings.userName), I am \(settings.assistantName). I am your personal AI research assistant.",
+                        voiceIdentifier: settings.preferredVoiceIdentifier.isEmpty ? nil : settings.preferredVoiceIdentifier,
+                        rate: settings.voiceRate
+                    )
+                } label: {
+                    Label("Test Voice Greeting", systemImage: "speaker.wave.2.fill")
+                }
+                .controlSize(.small)
             }
         }
         .formStyle(.grouped)

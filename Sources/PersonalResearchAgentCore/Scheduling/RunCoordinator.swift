@@ -103,6 +103,18 @@ public final class RunCoordinator: ObservableObject {
             logger.info("Research completed successfully. Report written to: \(reportURL.path)")
             notifications.sendCompletionNotification(topic: topic, reportURL: reportURL)
             
+            // Auto Read-Aloud Voice Briefing if enabled
+            if SettingsStore.shared.autoReadAloudOnCompletion {
+                if let markdown = try? String(contentsOf: reportURL, encoding: .utf8) {
+                    SpeechService.shared.speakReportBriefing(
+                        markdown: markdown,
+                        topic: topic,
+                        userName: SettingsStore.shared.userName,
+                        assistantName: SettingsStore.shared.assistantName
+                    )
+                }
+            }
+            
             if isScheduled {
                 scheduler.recordRunCompleted(at: Date())
             } else {
