@@ -57,13 +57,7 @@ struct PersonalResearchAgentApp: App {
                     }
                 }
         } label: {
-            HStack(spacing: 4) {
-                Image(systemName: appState.status.iconName)
-                if case .researching = appState.status {
-                    Text("Researching...")
-                        .font(.caption2)
-                }
-            }
+            Image(systemName: appState.status.iconName)
         }
         .menuBarExtraStyle(.window)
     }

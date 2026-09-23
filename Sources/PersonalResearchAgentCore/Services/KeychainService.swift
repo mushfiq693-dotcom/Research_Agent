@@ -147,6 +147,11 @@ public final class KeychainService: @unchecked Sendable {
         }
     }
     
+    // MARK: - Key Existence Check
+    public func hasKey(_ key: Key) -> Bool {
+        return getKey(key) != nil
+    }
+    
     // MARK: - Auto-Load from .env
     public func loadFromEnvFileIfAvailable() {
         for key in Key.allCases {
@@ -157,10 +162,18 @@ public final class KeychainService: @unchecked Sendable {
     }
     
     private func readKeyFromEnvFile(_ varName: String) -> String? {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let bundleDir = Bundle.main.bundleURL.deletingLastPathComponent().path
+        let parentDir = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().path
+        
         let possiblePaths = [
             FileManager.default.currentDirectoryPath + "/.env",
-            FileManager.default.homeDirectoryForCurrentUser.path + "/.env",
-            FileManager.default.homeDirectoryForCurrentUser.path + "/Documents/Personal Research Agent/.env"
+            home + "/Desktop/Personal Projects/Research_Agent/.env",
+            home + "/Documents/Personal Research Agent/.env",
+            home + "/.config/PersonalResearchAgent/.env",
+            home + "/.env",
+            bundleDir + "/.env",
+            parentDir + "/.env"
         ]
         
         for path in possiblePaths {

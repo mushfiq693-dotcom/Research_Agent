@@ -69,6 +69,28 @@ public struct PopoverView: View {
                     .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
             )
             
+            // MARK: - Missing API Key Notice
+            if !KeychainService.shared.hasKey(.openRouter) {
+                HStack(spacing: 6) {
+                    Image(systemName: "key.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                    Text("OpenRouter API Key not set.")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                    Spacer()
+                    Button("Set Key") {
+                        appState.openSettingsWindow()
+                    }
+                    .controlSize(.mini)
+                }
+                .padding(8)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.orange.opacity(0.12))
+                )
+            }
+            
             // MARK: - Research Now Inline Section
             if appState.isShowingManualInput {
                 VStack(spacing: 8) {

@@ -64,13 +64,10 @@ public final class NotificationService: NSObject, UNUserNotificationCenterDelega
             trigger: nil // Immediate delivery
         )
         
-        UNUserNotificationCenter.current().add(request) { [weak self] error in
-            Task { @MainActor [weak self] in
-                if let error = error {
-                    self?.logger.warning("Failed to deliver completion notification: \(error.localizedDescription)")
-                } else {
-                    self?.logger.info("Delivered completion notification for topic: '\(topic)'")
-                }
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                Logger(subsystem: "com.personalresearchagent.app", category: "NotificationService")
+                    .warning("Failed to deliver completion notification: \(error.localizedDescription)")
             }
         }
     }
@@ -89,11 +86,10 @@ public final class NotificationService: NSObject, UNUserNotificationCenterDelega
             trigger: nil
         )
         
-        UNUserNotificationCenter.current().add(request) { [weak self] error in
-            Task { @MainActor [weak self] in
-                if let error = error {
-                    self?.logger.warning("Failed to deliver failure notification: \(error.localizedDescription)")
-                }
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                Logger(subsystem: "com.personalresearchagent.app", category: "NotificationService")
+                    .warning("Failed to deliver failure notification: \(error.localizedDescription)")
             }
         }
     }
