@@ -71,6 +71,7 @@ public actor ResearchAgent {
             
             // MARK: 2. Planning
             await MainActor.run {
+                AppState.shared.activeResearchTopic = effectiveTopic
                 AppState.shared.status = .researching(step: .planning)
                 AppState.shared.isResearching = true
             }
@@ -86,19 +87,25 @@ public actor ResearchAgent {
             totalCompletionTokens += planResult.completionTokens
             totalModelCalls += 1
             
-            // MARK: 3. Search & Ranking
+            // MARK: 3. Search & Ranking (Concurrent)
             await MainActor.run {
                 AppState.shared.status = .researching(step: .searching)
             }
             
             var aggregatedSearchResults: [SearchResult] = []
-            for query in plan.searchQueries {
-                allExecutedQueries.append(query)
-                do {
-                    let results = try await searchProvider.searchWeb(query: query, count: depth.resultsPerQuery, freshness: .pastWeek)
+            await withTaskGroup(of: [SearchResult].self) { group in
+                for query in plan.searchQueries {
+                    allExecutedQueries.append(query)
+                    group.addTask {
+                        do {
+                            return try await searchProvider.searchWeb(query: query, count: depth.resultsPerQuery, freshness: .pastWeek)
+                        } catch {
+                            return []
+                        }
+                    }
+                }
+                for await results in group {
                     aggregatedSearchResults.append(contentsOf: results)
-                } catch {
-                    logger.warning("Search query '\(query)' failed: \(error.localizedDescription)")
                 }
             }
             
@@ -110,19 +117,27 @@ public actor ResearchAgent {
             )
             allFetchedSources = rankedSources
             
-            // MARK: 4. Page Fetching
+            // MARK: 4. Page Fetching (Concurrent)
             await MainActor.run {
                 AppState.shared.status = .researching(step: .fetching)
             }
             
             var fetchedPages: [ExtractedPage] = []
-            for src in rankedSources {
-                guard let url = URL(string: src.url) else { continue }
-                do {
-                    let page = try await pageFetcher.fetchWebPage(url: url, maxCharacters: depth.maxCharactersPerPage)
-                    fetchedPages.append(page)
-                } catch {
-                    logger.warning("Failed to fetch source: \(src.url)")
+            await withTaskGroup(of: ExtractedPage?.self) { group in
+                for src in rankedSources {
+                    guard let url = URL(string: src.url) else { continue }
+                    group.addTask {
+                        do {
+                            return try await pageFetcher.fetchWebPage(url: url, maxCharacters: depth.maxCharactersPerPage)
+                        } catch {
+                            return nil
+                        }
+                    }
+                }
+                for await page in group {
+                    if let page = page {
+                        fetchedPages.append(page)
+                    }
                 }
             }
             
@@ -241,6 +256,7 @@ public actor ResearchAgent {
                 AppState.shared.lastReportPath = reportMarkdownURL.path
                 AppState.shared.status = .completed(time: endTime, reportPath: reportMarkdownURL.path)
                 AppState.shared.isResearching = false
+                AppState.shared.activeResearchTopic = nil
             }
             
             logger.info("Autonomous research run completed successfully in \(String(format: "%.1f", duration))s.")
@@ -264,6 +280,7 @@ public actor ResearchAgent {
             await MainActor.run {
                 AppState.shared.status = .failed(reason: failureReason)
                 AppState.shared.isResearching = false
+                AppState.shared.activeResearchTopic = nil
             }
             throw error
         }

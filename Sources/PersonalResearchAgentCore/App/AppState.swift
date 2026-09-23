@@ -84,12 +84,14 @@ public final class AppState: ObservableObject {
     
     @Published public var status: AgentStatus = .idle(nextRunText: "08:00 AM")
     @Published public var isResearching: Bool = false
+    @Published public var activeResearchTopic: String?
     @Published public var isShowingSettings: Bool = false
     @Published public var isShowingManualInput: Bool = false
     @Published public var manualTopicInput: String = ""
     @Published public var lastReportPath: String?
     
     public var onManualResearchRequested: (@MainActor (String) -> Void)?
+    public var onCancelResearchRequested: (@MainActor () -> Void)?
     
     private init() {}
     
@@ -106,6 +108,8 @@ public final class AppState: ObservableObject {
         logger.info("Manual research triggered with topic: \(topicToRun)")
         isShowingManualInput = false
         manualTopicInput = ""
+        activeResearchTopic = topicToRun
+        isResearching = true
         
         if let handler = onManualResearchRequested {
             handler(topicToRun)
@@ -118,6 +122,13 @@ public final class AppState: ObservableObject {
                 }
             }
         }
+    }
+    
+    public func cancelResearch() {
+        logger.info("Cancelling active research...")
+        isResearching = false
+        activeResearchTopic = nil
+        onCancelResearchRequested?()
     }
     
     public func openReportsFolder() {

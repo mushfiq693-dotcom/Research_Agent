@@ -49,12 +49,12 @@ public struct PopoverView: View {
                 }
                 
                 HStack(spacing: 6) {
-                    Text("Scheduled Topic:")
+                    Text(appState.isResearching ? "Active Research:" : "Scheduled Topic:")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text(settings.activeTopic)
+                    Text(appState.activeResearchTopic ?? settings.activeTopic)
                         .font(.caption)
-                        .fontWeight(.medium)
+                        .fontWeight(.semibold)
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }

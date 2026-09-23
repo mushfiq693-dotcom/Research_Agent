@@ -283,10 +283,46 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
         // 1. Stop / Quiet / Cancel Command
         if lower.contains("stop") || lower.contains("quiet") || lower.contains("shut up") || lower.contains("pause") || lower == "cancel" {
             SpeechService.shared.stopSpeaking()
+            if AppState.shared.isResearching {
+                AppState.shared.cancelResearch()
+                SpeechService.shared.speak(
+                    text: "Cancelled research run, \(user).",
+                    rate: SettingsStore.shared.voiceRate,
+                    pitch: SettingsStore.shared.voicePitch
+                )
+            }
             conversationState = .idle
             statusMessage = "Voice output stopped."
             liveTranscript = ""
             return
+        }
+        
+        // 1b. In-Progress Research Inquiries & Busy Responses
+        if AppState.shared.isResearching {
+            let runningTopic = AppState.shared.activeResearchTopic ?? SettingsStore.shared.activeTopic
+            
+            if lower.contains("what's up") || lower.contains("how are you") || lower.contains("status") || lower.contains("done") || lower.contains("ready") || lower.contains("update") || lower == "hey \(assistant.lowercased())" || lower == assistant.lowercased() || lower == "hello" || lower.contains("how is it going") {
+                SpeechService.shared.speak(
+                    text: "I am currently researching \(runningTopic), \(user). Current step: \(AppState.shared.status.displayText). I will brief you as soon as the report is ready.",
+                    rate: SettingsStore.shared.voiceRate,
+                    pitch: SettingsStore.shared.voicePitch
+                )
+                statusMessage = "Researching: \(runningTopic)"
+                liveTranscript = ""
+                return
+            }
+            
+            let explicitTopic = extractExplicitResearchTopic(from: command)
+            if !explicitTopic.isEmpty {
+                SpeechService.shared.speak(
+                    text: "I am currently researching \(runningTopic), \(user). Say 'Stop' if you would like me to cancel this and start \(explicitTopic) instead.",
+                    rate: SettingsStore.shared.voiceRate,
+                    pitch: SettingsStore.shared.voicePitch
+                )
+                statusMessage = "Busy researching: \(runningTopic)"
+                liveTranscript = ""
+                return
+            }
         }
         
         // 2. Open Reports Folder

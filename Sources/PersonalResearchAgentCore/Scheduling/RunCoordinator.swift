@@ -45,10 +45,26 @@ public final class RunCoordinator: ObservableObject {
             self?.handleManualTrigger(topic: topic)
         }
         
+        // Wire cancel research trigger from AppState
+        AppState.shared.onCancelResearchRequested = { [weak self] in
+            self?.cancelCurrentResearch()
+        }
+        
         scheduler.start()
         wakeObserver.start()
         
         logger.info("RunCoordinator initialized and active.")
+    }
+    
+    public func cancelCurrentResearch() {
+        if let task = activeTask {
+            task.cancel()
+            activeTask = nil
+            AppState.shared.isResearching = false
+            AppState.shared.activeResearchTopic = nil
+            scheduler.recalculateAndArm()
+            logger.info("Research run cancelled by user.")
+        }
     }
     
     // MARK: - Trigger Handlers
