@@ -17,7 +17,7 @@ public final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesize
     }
     
     // MARK: - Speak Methods
-    public func speak(text: String, voiceIdentifier: String? = nil, rate: Float = 0.5) {
+    public func speak(text: String, voiceIdentifier: String? = nil, rate: Float = 0.48, pitch: Float = 0.80) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         
@@ -27,18 +27,20 @@ public final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesize
         
         let utterance = AVSpeechUtterance(string: trimmed)
         utterance.rate = min(max(rate, 0.2), 0.8)
-        utterance.pitchMultiplier = 1.0
+        utterance.pitchMultiplier = min(max(pitch, 0.5), 1.5)
         utterance.volume = 1.0
         
-        if let id = voiceIdentifier, let voice = AVSpeechSynthesisVoice(identifier: id) {
+        if let id = voiceIdentifier, !id.isEmpty, let voice = AVSpeechSynthesisVoice(identifier: id) {
             utterance.voice = voice
+        } else if let deepMaleVoice = Self.findBestDefaultVoice() {
+            utterance.voice = deepMaleVoice
         } else if let enVoice = AVSpeechSynthesisVoice(language: "en-US") {
             utterance.voice = enVoice
         }
         
         isSpeaking = true
         synthesizer.speak(utterance)
-        logger.info("Speech started for \(trimmed.count) characters.")
+        logger.info("Speech started for \(trimmed.count) characters with rate \(rate), pitch \(pitch).")
     }
     
     public func speakReportBriefing(markdown: String, topic: String, userName: String = "Mushfiq", assistantName: String = "Jarvis") {
@@ -49,8 +51,9 @@ public final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesize
             assistantName: assistantName
         )
         let rate = SettingsStore.shared.voiceRate
+        let pitch = SettingsStore.shared.voicePitch
         let voiceId = SettingsStore.shared.preferredVoiceIdentifier
-        speak(text: spokenText, voiceIdentifier: voiceId.isEmpty ? nil : voiceId, rate: rate)
+        speak(text: spokenText, voiceIdentifier: voiceId.isEmpty ? nil : voiceId, rate: rate, pitch: pitch)
     }
     
     public func stopSpeaking() {
@@ -126,6 +129,40 @@ public final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesize
     }
     
     nonisolated public static func availableVoices() -> [AVSpeechSynthesisVoice] {
-        return AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix("en") }
+        let noveltyNames: Set<String> = [
+            "bad news", "bahh", "bells", "boing", "bubbles", "cellos",
+            "deranged", "good news", "hysterical", "jester", "organ",
+            "superstar", "trinoids", "whisper", "wobble", "zarvox", "albert", "fred", "junior", "ralph"
+        ]
+        
+        let allVoices = AVSpeechSynthesisVoice.speechVoices().filter { voice in
+            guard voice.language.hasPrefix("en") else { return false }
+            let lowerName = voice.name.lowercased()
+            return !noveltyNames.contains(lowerName)
+        }
+        
+        return allVoices.sorted { v1, v2 in
+            // Enhanced/Premium first
+            if v1.quality.rawValue != v2.quality.rawValue {
+                return v1.quality.rawValue > v2.quality.rawValue
+            }
+            return v1.name < v2.name
+        }
+    }
+    
+    nonisolated public static func findBestDefaultVoice() -> AVSpeechSynthesisVoice? {
+        let voices = AVSpeechSynthesisVoice.speechVoices()
+        // Priority 1: Enhanced/Premium British/US Male Voices (Daniel, Oliver, Evan, Nathan, Alex)
+        let prioritizedNames = ["Daniel", "Oliver", "Evan", "Nathan", "Alex", "Eddy", "Reed", "Rocko", "Samantha"]
+        
+        for name in prioritizedNames {
+            if let enhanced = voices.first(where: { $0.name.contains(name) && $0.quality == .enhanced }) {
+                return enhanced
+            }
+            if let found = voices.first(where: { $0.name.contains(name) }) {
+                return found
+            }
+        }
+        return AVSpeechSynthesisVoice(language: "en-US")
     }
 }

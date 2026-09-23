@@ -323,10 +323,20 @@ public struct SettingsView: View {
                 Toggle("Auto Read-Aloud on Research Completion", isOn: $settings.autoReadAloudOnCompletion)
                 
                 Picker("Voice:", selection: $settings.preferredVoiceIdentifier) {
-                    Text("Default Natural Voice").tag("")
+                    Text("Default Natural Voice (Deep Male)").tag("")
                     ForEach(SpeechService.availableVoices(), id: \.identifier) { voice in
-                        Text("\(voice.name) (\(voice.language))").tag(voice.identifier)
+                        let qualityTag = voice.quality == .premium ? " [Premium]" : (voice.quality == .enhanced ? " [Enhanced]" : "")
+                        Text("\(voice.name)\(qualityTag) (\(voice.language))").tag(voice.identifier)
                     }
+                }
+                
+                HStack {
+                    Text("Vocal Tone (Pitch):")
+                    Slider(value: $settings.voicePitch, in: 0.6...1.1, step: 0.05)
+                    Text(settings.voicePitch < 0.85 ? "Deep Manly (\(String(format: "%.2f", settings.voicePitch)))" : "Standard (\(String(format: "%.2f", settings.voicePitch)))")
+                        .font(.caption)
+                        .foregroundStyle(settings.voicePitch < 0.85 ? .blue : .secondary)
+                        .frame(width: 120, alignment: .trailing)
                 }
                 
                 HStack {
@@ -337,16 +347,34 @@ public struct SettingsView: View {
                         .frame(width: 45)
                 }
                 
-                Button {
-                    SpeechService.shared.speak(
-                        text: "Hello \(settings.userName), I am \(settings.assistantName). I am your personal AI research assistant.",
-                        voiceIdentifier: settings.preferredVoiceIdentifier.isEmpty ? nil : settings.preferredVoiceIdentifier,
-                        rate: settings.voiceRate
-                    )
-                } label: {
-                    Label("Test Voice Greeting", systemImage: "speaker.wave.2.fill")
+                HStack(spacing: 12) {
+                    Button {
+                        SpeechService.shared.speak(
+                            text: "Hello \(settings.userName), I am \(settings.assistantName). Your briefing is ready.",
+                            voiceIdentifier: settings.preferredVoiceIdentifier.isEmpty ? nil : settings.preferredVoiceIdentifier,
+                            rate: settings.voiceRate,
+                            pitch: settings.voicePitch
+                        )
+                    } label: {
+                        Label("Test Voice Greeting", systemImage: "speaker.wave.2.fill")
+                    }
+                    .controlSize(.small)
+                    
+                    Button {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.Accessibility-Settings.extension?SpokenContent") {
+                            NSWorkspace.shared.open(url)
+                        } else if let fallback = URL(string: "x-apple.systempreferences:com.apple.preference.speech") {
+                            NSWorkspace.shared.open(fallback)
+                        }
+                    } label: {
+                        Label("Download Apple Neural Voices...", systemImage: "arrow.down.circle")
+                    }
+                    .controlSize(.small)
                 }
-                .controlSize(.small)
+                
+                Text("Tip: To get the most realistic human male voices (e.g. Oliver Enhanced or Siri Voice), click 'Download Apple Neural Voices' and download Enhanced/Premium voices in macOS Settings.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)

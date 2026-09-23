@@ -132,6 +132,7 @@ public final class SettingsStore: ObservableObject {
         static let assistantName = "pra_assistant_name"
         static let autoReadAloud = "pra_auto_read_aloud"
         static let voiceRate = "pra_voice_rate"
+        static let voicePitch = "pra_voice_pitch"
         static let preferredVoiceId = "pra_preferred_voice_id"
     }
     
@@ -220,6 +221,10 @@ public final class SettingsStore: ObservableObject {
         didSet { defaults.set(voiceRate, forKey: Keys.voiceRate) }
     }
     
+    @Published public var voicePitch: Float {
+        didSet { defaults.set(voicePitch, forKey: Keys.voicePitch) }
+    }
+    
     @Published public var preferredVoiceIdentifier: String {
         didSet { defaults.set(preferredVoiceIdentifier, forKey: Keys.preferredVoiceId) }
     }
@@ -266,7 +271,8 @@ public final class SettingsStore: ObservableObject {
         self.userName = defaults.string(forKey: Keys.userName) ?? "Mushfiq"
         self.assistantName = defaults.string(forKey: Keys.assistantName) ?? "Jarvis"
         self.autoReadAloudOnCompletion = defaults.bool(forKey: Keys.autoReadAloud)
-        self.voiceRate = defaults.object(forKey: Keys.voiceRate) != nil ? defaults.float(forKey: Keys.voiceRate) : 0.5
+        self.voiceRate = defaults.object(forKey: Keys.voiceRate) != nil ? defaults.float(forKey: Keys.voiceRate) : 0.48
+        self.voicePitch = defaults.object(forKey: Keys.voicePitch) != nil ? defaults.float(forKey: Keys.voicePitch) : 0.80
         self.preferredVoiceIdentifier = defaults.string(forKey: Keys.preferredVoiceId) ?? ""
     }
     
