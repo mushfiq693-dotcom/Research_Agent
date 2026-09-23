@@ -47,7 +47,10 @@ public final class KeychainService: @unchecked Sendable {
         }
     }
     
-    private init() {}
+    private init() {
+        // Automatically check and load from .env file if Keychain is currently empty
+        loadFromEnvFileIfAvailable()
+    }
     
     // MARK: - Save Key
     public func saveKey(_ key: Key, value: String) throws {
@@ -107,15 +110,24 @@ public final class KeychainService: @unchecked Sendable {
         let status = SecItemCopyMatching(query as CFDictionary, &dataTypeRef)
         
         if status == errSecSuccess, let data = dataTypeRef as? Data, let string = String(data: data, encoding: .utf8) {
-            return string
+            let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return trimmed
+            }
         }
         
-        #if DEBUG
-        // In DEBUG mode only, allow reading from environment variables for test suites
+        // Check Environment variables
         if let envVal = ProcessInfo.processInfo.environment[key.envVarName], !envVal.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return envVal.trimmingCharacters(in: .whitespacesAndNewlines)
+            let val = envVal.trimmingCharacters(in: .whitespacesAndNewlines)
+            try? saveKey(key, value: val) // Auto-persist to Keychain
+            return val
         }
-        #endif
+        
+        // Check local .env file
+        if let envVal = readKeyFromEnvFile(key.envVarName), !envVal.isEmpty {
+            try? saveKey(key, value: envVal) // Auto-persist to Keychain
+            return envVal
+        }
         
         return nil
     }
@@ -133,6 +145,52 @@ public final class KeychainService: @unchecked Sendable {
             logger.error("Failed to delete Keychain item for \(key.displayName): \(status)")
             throw KeychainError.unhandledError(status: status)
         }
+    }
+    
+    // MARK: - Auto-Load from .env
+    public func loadFromEnvFileIfAvailable() {
+        for key in Key.allCases {
+            if let val = readKeyFromEnvFile(key.envVarName), !val.isEmpty {
+                try? saveKey(key, value: val)
+            }
+        }
+    }
+    
+    private func readKeyFromEnvFile(_ varName: String) -> String? {
+        let possiblePaths = [
+            FileManager.default.currentDirectoryPath + "/.env",
+            FileManager.default.homeDirectoryForCurrentUser.path + "/.env",
+            FileManager.default.homeDirectoryForCurrentUser.path + "/Documents/Personal Research Agent/.env"
+        ]
+        
+        for path in possiblePaths {
+            guard FileManager.default.fileExists(atPath: path),
+                  let content = try? String(contentsOfFile: path, encoding: .utf8) else {
+                continue
+            }
+            
+            let lines = content.components(separatedBy: .newlines)
+            for line in lines {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                guard !trimmed.hasPrefix("#"), trimmed.contains("=") else { continue }
+                
+                let parts = trimmed.split(separator: "=", maxSplits: 1).map { String($0) }
+                if parts.count == 2 {
+                    let k = parts[0].trimmingCharacters(in: .whitespaces)
+                    var v = parts[1].trimmingCharacters(in: .whitespaces)
+                    
+                    // Remove quotes if present
+                    if (v.hasPrefix("\"") && v.hasSuffix("\"")) || (v.hasPrefix("'") && v.hasSuffix("'")) {
+                        v = String(v.dropFirst().dropLast())
+                    }
+                    
+                    if k == varName && !v.isEmpty {
+                        return v
+                    }
+                }
+            }
+        }
+        return nil
     }
     
     // MARK: - Redaction Utility

@@ -12,10 +12,12 @@ project.xcworkspace/xcuserdata/
 *.xcuserdatad/
 .swiftpm/
 .build/
+*.app
 
 # Environments & Secrets
 .env
 .env.*
+!.env.example
 *.key
 *.token
 *.p8
@@ -27,4 +29,3 @@ reports/
 logs/
 cache/
 scratch/
-*.app
