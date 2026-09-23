@@ -5,6 +5,7 @@ public struct PopoverView: View {
     @ObservedObject private var appState = AppState.shared
     @ObservedObject private var settings = SettingsStore.shared
     @ObservedObject private var speechService = SpeechService.shared
+    @ObservedObject private var voiceInput = VoiceInputService.shared
     
     public init() {}
     
@@ -134,18 +135,72 @@ public struct PopoverView: View {
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
             
+            // MARK: - Voice Command Live Card
+            if voiceInput.isListening {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "waveform.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(.red)
+                        
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(settings.assistantName) is Listening...")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.red)
+                            Text(voiceInput.liveTranscript.isEmpty ? "Say: 'Hey \(settings.assistantName), research Swift 6'" : "\"\(voiceInput.liveTranscript)\"")
+                                .font(.caption2)
+                                .foregroundStyle(.primary)
+                                .lineLimit(2)
+                        }
+                        
+                        Spacer()
+                        
+                        Button("Done") {
+                            voiceInput.stopListening()
+                        }
+                        .controlSize(.mini)
+                    }
+                }
+                .padding(10)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.red.opacity(0.08)))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.red.opacity(0.3), lineWidth: 1))
+            }
+            
             // MARK: - Primary Action Buttons
             HStack(spacing: 8) {
+                if voiceInput.isListening {
+                    Button {
+                        voiceInput.toggleListening()
+                    } label: {
+                        Label("Listening...", systemImage: "waveform")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                    .controlSize(.regular)
+                } else {
+                    Button {
+                        voiceInput.toggleListening()
+                    } label: {
+                        Label("Talk to \(settings.assistantName)", systemImage: "mic.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+                    .disabled(appState.isResearching)
+                }
+                
                 if !appState.isShowingManualInput {
                     Button {
                         withAnimation(.easeInOut(duration: 0.2)) {
                             appState.isShowingManualInput = true
                         }
                     } label: {
-                        Label("Research Now", systemImage: "play.fill")
-                            .frame(maxWidth: .infinity)
+                        Label("Type", systemImage: "keyboard")
+                            .frame(maxWidth: 80)
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.bordered)
                     .controlSize(.regular)
                     .disabled(appState.isResearching)
                 }
@@ -153,11 +208,12 @@ public struct PopoverView: View {
                 Button {
                     appState.openReportsFolder()
                 } label: {
-                    Label("Reports", systemImage: "folder")
-                        .frame(maxWidth: .infinity)
+                    Image(systemName: "folder")
+                        .frame(width: 24)
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.regular)
+                .help("Open Reports Directory")
             }
             
             // MARK: - Audio Briefing (Read Aloud) Control

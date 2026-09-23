@@ -48,10 +48,10 @@ cat << 'EOF' > "${CONTENTS_DIR}/Info.plist"
     <string>14.0</string>
     <key>LSUIElement</key>
     <true/>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-    <key>NSPrincipalClass</key>
-    <string>NSApplication</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Personal Research Agent requires microphone access to listen to your voice commands.</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>Personal Research Agent requires speech recognition to understand research requests.</string>
 </dict>
 </plist>
 EOF
