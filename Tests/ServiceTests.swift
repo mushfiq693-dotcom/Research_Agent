@@ -21,6 +21,7 @@ public struct ServiceTests {
         try testDuckDuckGoLiteParsing()
         try await testUnifiedSearchFallback()
         try testSpeechMarkdownCleaning()
+        try await testVoiceCommandTopicExtraction()
         print("✅ ServiceTests passed successfully.")
     }
     
@@ -294,5 +295,25 @@ public struct ServiceTests {
         )
         assert(formatted.contains("Hello Mushfiq, this is Jarvis."), "Personalized greeting inserted")
         print("  ✓ testSpeechMarkdownCleaning passed")
+    }
+    
+    // MARK: - 11. Voice Command Topic Extraction
+    @MainActor
+    public static func testVoiceCommandTopicExtraction() throws {
+        let voiceInput = VoiceInputService.shared
+        
+        let t1 = voiceInput.extractResearchTopic(from: "Hey Jarvis please research on Swift 6 concurrency")
+        assert(t1.lowercased() == "swift 6 concurrency", "Extracted topic match 1: '\(t1)'")
+        
+        let t2 = voiceInput.extractResearchTopic(from: "Jarvis, search for latest Apple M4 benchmarks")
+        assert(t2.lowercased() == "latest apple m4 benchmarks", "Extracted topic match 2: '\(t2)'")
+        
+        let t3 = voiceInput.extractResearchTopic(from: "Find out about deepseek v3 architecture")
+        assert(t3.lowercased() == "deepseek v3 architecture", "Extracted topic match 3: '\(t3)'")
+        
+        let t4 = voiceInput.extractResearchTopic(from: "Quantum Computing Algorithms")
+        assert(t4 == "Quantum Computing Algorithms", "Raw query preserved: '\(t4)'")
+        
+        print("  ✓ testVoiceCommandTopicExtraction passed")
     }
 }

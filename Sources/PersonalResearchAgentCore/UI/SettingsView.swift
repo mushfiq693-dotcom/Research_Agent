@@ -319,9 +319,22 @@ public struct SettingsView: View {
                     .textFieldStyle(.roundedBorder)
             }
             
-            Section("Audio Briefing (Voice Read-Aloud)") {
+            Section("Voiceover & Voice Commands") {
+                Toggle("Enable Voiceover Hands-Free Mode", isOn: Binding(
+                    get: { settings.isVoiceControlEnabled },
+                    set: { enabled in
+                        settings.isVoiceControlEnabled = enabled
+                        if enabled {
+                            VoiceInputService.shared.startListening()
+                        } else {
+                            VoiceInputService.shared.stopListening()
+                        }
+                    }
+                ))
                 Toggle("Auto Read-Aloud on Research Completion", isOn: $settings.autoReadAloudOnCompletion)
-                
+            }
+            
+            Section("Audio Briefing Voice Customization") {
                 Picker("Voice:", selection: $settings.preferredVoiceIdentifier) {
                     Text("Default Natural Voice (Deep Male)").tag("")
                     ForEach(SpeechService.availableVoices(), id: \.identifier) { voice in

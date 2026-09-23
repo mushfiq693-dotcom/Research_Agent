@@ -9,6 +9,7 @@ BUNDLE_NAME="${APP_NAME}.app"
 CONTENTS_DIR="${BUNDLE_NAME}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
 RESOURCES_DIR="${CONTENTS_DIR}/Resources"
+ENTITLEMENTS_FILE="entitlements.plist"
 
 # 1. Compile Release Executable
 swift build -c release
@@ -56,5 +57,25 @@ cat << 'EOF' > "${CONTENTS_DIR}/Info.plist"
 </plist>
 EOF
 
-echo "✅ Successfully created ${BUNDLE_NAME}!"
-echo "To install, copy ${BUNDLE_NAME} to /Applications or double-click to run."
+# 5. Generate Entitlements
+cat << 'EOF' > "${ENTITLEMENTS_FILE}"
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <key>com.apple.security.personal-information.speech-recognition</key>
+    <true/>
+    <key>com.apple.security.network.client</key>
+    <true/>
+</dict>
+</plist>
+EOF
+
+# 6. Codesign the Application Bundle with Ad-Hoc Signature and Entitlements
+echo "Signing ${BUNDLE_NAME} with entitlements..."
+codesign --force --deep --sign - --entitlements "${ENTITLEMENTS_FILE}" "${BUNDLE_NAME}"
+
+echo "✅ Successfully built and signed ${BUNDLE_NAME}!"
+echo "To run, launch ./PersonalResearchAgent.app or copy to /Applications."

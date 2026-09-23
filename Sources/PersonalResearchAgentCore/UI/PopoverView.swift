@@ -10,7 +10,7 @@ public struct PopoverView: View {
     public init() {}
     
     public var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             // MARK: - Header
             HStack(spacing: 8) {
                 Image(systemName: "sparkles.rectangle.stack.fill")
@@ -21,18 +21,17 @@ public struct PopoverView: View {
                     Text("Personal Research Agent")
                         .font(.headline)
                         .fontWeight(.semibold)
-                    Text("Autonomous Web Intelligence")
+                    Text("Jarvis Voice AI • Autonomous Intelligence")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
             }
-            .padding(.bottom, 2)
             
             Divider()
             
             // MARK: - Status Card
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     if case .researching = appState.status {
                         ProgressView()
@@ -50,7 +49,7 @@ public struct PopoverView: View {
                 }
                 
                 HStack(spacing: 6) {
-                    Text("Topic:")
+                    Text("Scheduled Topic:")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Text(settings.activeTopic)
@@ -71,195 +70,153 @@ public struct PopoverView: View {
                     .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
             )
             
-            // MARK: - Missing API Key Notice
-            if !KeychainService.shared.hasKey(.openRouter) {
-                HStack(spacing: 6) {
-                    Image(systemName: "key.fill")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                    Text("OpenRouter API Key not set.")
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                    Spacer()
-                    Button("Set Key") {
-                        appState.openSettingsWindow()
-                    }
-                    .controlSize(.mini)
-                }
-                .padding(8)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.orange.opacity(0.12))
-                )
-            }
-            
-            // MARK: - Research Now Inline Section
-            if appState.isShowingManualInput {
-                VStack(spacing: 8) {
-                    TextField("Research something specific...", text: $appState.manualTopicInput)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.subheadline)
-                        .onSubmit {
-                            appState.startManualResearch()
+            // MARK: - Integrated Voiceover Control Card
+            VStack(alignment: .leading, spacing: 6) {
+                if speechService.isSpeaking {
+                    // Jarvis is currently speaking
+                    HStack(spacing: 8) {
+                        Image(systemName: "speaker.wave.2.fill")
+                            .font(.subheadline)
+                            .foregroundStyle(.blue)
+                        
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Jarvis Speaking...")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.blue)
+                            Text("Say 'Stop' to interrupt")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
                         }
-                    
-                    HStack {
-                        Button("Cancel") {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                appState.isShowingManualInput = false
-                                appState.manualTopicInput = ""
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                         
                         Spacer()
                         
                         Button {
-                            appState.startManualResearch()
+                            speechService.stopSpeaking()
                         } label: {
-                            Label("Start Research", systemImage: "arrow.right.circle.fill")
-                                .font(.caption)
-                                .fontWeight(.semibold)
+                            Image(systemName: "stop.circle.fill")
+                                .font(.title3)
+                                .foregroundStyle(.red)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
+                        .buttonStyle(.plain)
+                        .help("Stop Voice Output")
                     }
-                }
-                .padding(10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color(nsColor: .windowBackgroundColor))
-                )
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-            
-            // MARK: - Voice Command Live Card
-            if voiceInput.isListening {
-                VStack(alignment: .leading, spacing: 6) {
+                } else if voiceInput.isListening {
+                    // Jarvis is actively listening to user voice
                     HStack(spacing: 8) {
-                        Image(systemName: "waveform.circle.fill")
-                            .font(.title3)
+                        Image(systemName: "waveform")
+                            .font(.subheadline)
                             .foregroundStyle(.red)
                         
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("\(settings.assistantName) is Listening...")
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Voiceover: Listening...")
                                 .font(.caption)
                                 .fontWeight(.semibold)
                                 .foregroundStyle(.red)
-                            Text(voiceInput.liveTranscript.isEmpty ? "Say: 'Hey \(settings.assistantName), research Swift 6'" : "\"\(voiceInput.liveTranscript)\"")
+                            
+                            Text(voiceInput.liveTranscript.isEmpty ? "Say: 'Hey Jarvis...' or 'Research Quantum AI'" : "\"\(voiceInput.liveTranscript)\"")
                                 .font(.caption2)
                                 .foregroundStyle(.primary)
-                                .lineLimit(2)
+                                .lineLimit(1)
                         }
                         
                         Spacer()
                         
-                        Button("Done") {
+                        Button {
                             voiceInput.stopListening()
+                        } label: {
+                            Image(systemName: "mic.slash.fill")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
                         }
-                        .controlSize(.mini)
+                        .buttonStyle(.plain)
+                        .help("Mute Voiceover")
                     }
-                }
-                .padding(10)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.red.opacity(0.08)))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.red.opacity(0.3), lineWidth: 1))
-            }
-            
-            // MARK: - Primary Action Buttons
-            HStack(spacing: 8) {
-                if voiceInput.isListening {
-                    Button {
-                        voiceInput.toggleListening()
-                    } label: {
-                        Label("Listening...", systemImage: "waveform")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.red)
-                    .controlSize(.regular)
                 } else {
-                    Button {
-                        voiceInput.toggleListening()
-                    } label: {
-                        Label("Talk to \(settings.assistantName)", systemImage: "mic.fill")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.regular)
-                    .disabled(appState.isResearching)
-                }
-                
-                if !appState.isShowingManualInput {
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            appState.isShowingManualInput = true
-                        }
-                    } label: {
-                        Label("Type", systemImage: "keyboard")
-                            .frame(maxWidth: 80)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.regular)
-                    .disabled(appState.isResearching)
-                }
-                
-                Button {
-                    appState.openReportsFolder()
-                } label: {
-                    Image(systemName: "folder")
-                        .frame(width: 24)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.regular)
-                .help("Open Reports Directory")
-            }
-            
-            // MARK: - Audio Briefing (Read Aloud) Control
-            if let reportPath = appState.lastReportPath ?? findLatestReportPath(), FileManager.default.fileExists(atPath: reportPath) {
-                Button {
-                    if speechService.isSpeaking {
-                        speechService.stopSpeaking()
-                    } else {
-                        if let md = try? String(contentsOfFile: reportPath, encoding: .utf8) {
-                            speechService.speakReportBriefing(
-                                markdown: md,
-                                topic: settings.activeTopic,
-                                userName: settings.userName,
-                                assistantName: settings.assistantName
-                            )
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: speechService.isSpeaking ? "stop.circle.fill" : "speaker.wave.2.fill")
-                            .foregroundStyle(speechService.isSpeaking ? .red : .blue)
-                        Text(speechService.isSpeaking ? "Stop Voice Briefing" : "🔊 Listen to Briefing")
+                    // Voiceover is idle / muted
+                    HStack(spacing: 8) {
+                        Image(systemName: "mic.fill")
                             .font(.subheadline)
-                            .fontWeight(.medium)
+                            .foregroundStyle(.primary)
+                        
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Voiceover Control")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                            Text("Click to speak or listen")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        
+                        Spacer()
+                        
+                        Button("Start") {
+                            voiceInput.startListening()
+                        }
+                        .controlSize(.small)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 2)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.regular)
+            }
+            .padding(9)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(voiceInput.isListening ? Color.red.opacity(0.08) : (speechService.isSpeaking ? Color.blue.opacity(0.08) : Color(nsColor: .windowBackgroundColor)))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(voiceInput.isListening ? Color.red.opacity(0.25) : (speechService.isSpeaking ? Color.blue.opacity(0.25) : Color(nsColor: .separatorColor)), lineWidth: 0.5)
+            )
+            
+            // MARK: - Direct Topic Input Field
+            HStack(spacing: 6) {
+                TextField("Research a specific topic...", text: $appState.manualTopicInput)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.caption)
+                    .onSubmit {
+                        appState.startManualResearch()
+                    }
+                    .disabled(appState.isResearching)
+                
+                Button {
+                    appState.startManualResearch()
+                } label: {
+                    Image(systemName: "arrow.right.circle.fill")
+                        .font(.body)
+                        .foregroundStyle(appState.isResearching ? Color.secondary : Color.blue)
+                }
+                .buttonStyle(.plain)
+                .disabled(appState.isResearching)
+                .help("Start Research Now")
             }
             
             Divider()
             
-            // MARK: - Footer Controls
+            // MARK: - Minimal Footer Bar
             HStack {
+                Button {
+                    appState.openReportsFolder()
+                } label: {
+                    Label("Reports", systemImage: "folder")
+                }
+                .buttonStyle(.plain)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .help("Open ~/Documents/Personal Research Agent")
+                
+                Spacer()
+                
                 Button {
                     appState.openSettingsWindow()
                 } label: {
-                    Label("Settings...", systemImage: "gearshape")
+                    Label("Settings", systemImage: "gearshape")
                 }
                 .buttonStyle(.plain)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 
-                Spacer()
+                Text("•")
+                    .foregroundStyle(.tertiary)
+                    .font(.caption)
                 
                 Button {
                     appState.quit()
@@ -273,26 +230,5 @@ public struct PopoverView: View {
         }
         .padding(14)
         .frame(width: 320)
-    }
-    
-    private func findLatestReportPath() -> String? {
-        let dirURL = settings.reportsDirectoryURL
-        let fileManager = FileManager.default
-        guard let enumerator = fileManager.enumerator(at: dirURL, includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles]) else {
-            return nil
-        }
-        
-        var latestURL: URL?
-        var latestDate: Date = .distantPast
-        
-        for case let fileURL as URL in enumerator {
-            guard fileURL.pathExtension == "md" else { continue }
-            if let attrs = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]),
-               let date = attrs.contentModificationDate, date > latestDate {
-                latestDate = date
-                latestURL = fileURL
-            }
-        }
-        return latestURL?.path
     }
 }
