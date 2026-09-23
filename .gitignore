@@ -27,3 +27,4 @@ reports/
 logs/
 cache/
 scratch/
+*.app
