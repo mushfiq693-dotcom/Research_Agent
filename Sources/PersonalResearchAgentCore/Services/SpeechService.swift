@@ -139,13 +139,20 @@ public final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesize
         ]
         
         let allVoices = AVSpeechSynthesisVoice.speechVoices().filter { voice in
+            if voice.voiceTraits.contains(.isPersonalVoice) {
+                return true
+            }
             guard voice.language.hasPrefix("en") else { return false }
             let lowerName = voice.name.lowercased()
             return !noveltyNames.contains(lowerName)
         }
         
         return allVoices.sorted { v1, v2 in
-            // Enhanced/Premium first
+            let isPersonal1 = v1.voiceTraits.contains(.isPersonalVoice)
+            let isPersonal2 = v2.voiceTraits.contains(.isPersonalVoice)
+            if isPersonal1 != isPersonal2 {
+                return isPersonal1 && !isPersonal2
+            }
             if v1.quality.rawValue != v2.quality.rawValue {
                 return v1.quality.rawValue > v2.quality.rawValue
             }

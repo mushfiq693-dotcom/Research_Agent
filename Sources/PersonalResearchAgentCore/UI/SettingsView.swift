@@ -338,7 +338,8 @@ public struct SettingsView: View {
                 Picker("Voice:", selection: $settings.preferredVoiceIdentifier) {
                     Text("Default Natural Voice (Deep Male)").tag("")
                     ForEach(SpeechService.availableVoices(), id: \.identifier) { voice in
-                        let qualityTag = voice.quality == .premium ? " [Premium]" : (voice.quality == .enhanced ? " [Enhanced]" : "")
+                        let isPersonal = voice.voiceTraits.contains(.isPersonalVoice)
+                        let qualityTag = isPersonal ? " [Personal Voice ⭐️]" : (voice.quality == .premium ? " [Premium]" : (voice.quality == .enhanced ? " [Enhanced]" : ""))
                         Text("\(voice.name)\(qualityTag) (\(voice.language))").tag(voice.identifier)
                     }
                 }
@@ -374,18 +375,18 @@ public struct SettingsView: View {
                     .controlSize(.small)
                     
                     Button {
-                        if let url = URL(string: "x-apple.systempreferences:com.apple.Accessibility-Settings.extension?SpokenContent") {
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.Accessibility-Settings.extension?PersonalVoice") {
                             NSWorkspace.shared.open(url)
-                        } else if let fallback = URL(string: "x-apple.systempreferences:com.apple.preference.speech") {
-                            NSWorkspace.shared.open(fallback)
+                        } else if let spoken = URL(string: "x-apple.systempreferences:com.apple.Accessibility-Settings.extension?SpokenContent") {
+                            NSWorkspace.shared.open(spoken)
                         }
                     } label: {
-                        Label("Download Apple Neural Voices...", systemImage: "arrow.down.circle")
+                        Label("Create Personal Voice...", systemImage: "person.crop.circle.badge.waveform")
                     }
                     .controlSize(.small)
                 }
                 
-                Text("Tip: To get the most realistic human male voices (e.g. Oliver Enhanced or Siri Voice), click 'Download Apple Neural Voices' and download Enhanced/Premium voices in macOS Settings.")
+                Text("Tip: To clone your own voice for free, click 'Create Personal Voice' and record 15 minutes in macOS Settings. Once processed, it will appear in the Voice list above.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
