@@ -101,6 +101,23 @@ public struct PopoverView: View {
                         .buttonStyle(.plain)
                         .help("Stop Voice Output")
                     }
+                } else if voiceInput.conversationState == .thinking {
+                    // Jarvis is thinking via LLM
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Jarvis Thinking...")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.purple)
+                            Text("Generating smart answer...")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
                 } else if voiceInput.isListening {
                     // Jarvis is actively listening to user voice
                     HStack(spacing: 8) {

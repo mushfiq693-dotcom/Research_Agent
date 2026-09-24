@@ -52,6 +52,7 @@ final class AudioEngineManager: @unchecked Sendable {
 public enum VoiceConversationState: Equatable, Sendable {
     case idle
     case awaitingTopic
+    case thinking
 }
 
 // MARK: - VoiceInputService
@@ -74,7 +75,11 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
     
     private var silenceTimer: Task<Void, Never>?
     private var restartTask: Task<Void, Never>?
+    private var activeLLMTask: Task<Void, Never>?
     private var isProcessingCommand: Bool = false
+    
+    // Short-term conversational history for natural back-and-forth dialogue
+    private var chatHistory: [ChatMessage] = []
     
     private override init() {
         super.init()
@@ -247,7 +252,7 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
     private func resetSilenceTimer(for text: String) {
         silenceTimer?.cancel()
         silenceTimer = Task {
-            // Wait for 1.3 seconds of silence
+            // Wait for 1.3 seconds of natural silence after speech
             try? await Task.sleep(nanoseconds: 1_300_000_000)
             guard !Task.isCancelled, !SpeechService.shared.isSpeaking else { return }
             
@@ -258,7 +263,7 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
         }
     }
     
-    // MARK: - Command Parser & Conversational Handler
+    // MARK: - Command Parser & Smart Conversational Handler
     public func handleVoiceCommand(_ rawCommand: String) {
         guard !isProcessingCommand else { return }
         let command = rawCommand.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -270,7 +275,7 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
         
         // 0. Acoustic Echo Filter: Discard if recognizer simply picked up Jarvis's own last utterance
         let lastSpoken = SpeechService.shared.lastSpokenText
-        if !lastSpoken.isEmpty && (lower.contains("what topic would you like") || lower.contains("research briefing") || lower == lastSpoken || (lastSpoken.count > 15 && lower.contains(lastSpoken.prefix(20)))) {
+        if !lastSpoken.isEmpty && (lower == lastSpoken || (lastSpoken.count > 15 && lower.contains(lastSpoken.prefix(20)))) {
             logger.info("Discarding acoustic echo from assistant's own voice: '\(command)'")
             liveTranscript = ""
             return
@@ -282,6 +287,8 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
         
         // 1. Stop / Quiet / Cancel Command
         if lower.contains("stop") || lower.contains("quiet") || lower.contains("shut up") || lower.contains("pause") || lower == "cancel" {
+            activeLLMTask?.cancel()
+            activeLLMTask = nil
             SpeechService.shared.stopSpeaking()
             if AppState.shared.isResearching {
                 AppState.shared.cancelResearch()
@@ -297,7 +304,7 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
             return
         }
         
-        // 1b. In-Progress Research Inquiries & Busy Responses
+        // 2. In-Progress Research Inquiries & Busy Responses
         if AppState.shared.isResearching {
             let runningTopic = AppState.shared.activeResearchTopic ?? SettingsStore.shared.activeTopic
             
@@ -325,7 +332,7 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
             }
         }
         
-        // 2. Open Reports Folder
+        // 3. Open Reports Folder
         if lower.contains("open report") || lower.contains("open folder") || lower.contains("show report") || lower.contains("open directory") {
             AppState.shared.openReportsFolder()
             conversationState = .idle
@@ -339,7 +346,7 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
             return
         }
         
-        // 3. Read Latest Research Briefing
+        // 4. Read Latest Research Briefing
         if lower.contains("read report") || lower.contains("read briefing") || lower.contains("summarize report") || lower.contains("listen to report") || lower.contains("brief me") {
             conversationState = .idle
             if let reportPath = AppState.shared.lastReportPath ?? findLatestReportPath(),
@@ -363,20 +370,7 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
             return
         }
         
-        // 4. Greeting / Conversational Status Inquiry (DO NOT START RESEARCH)
-        if lower.contains("what's up") || lower.contains("how are you") || lower == "hey \(assistant.lowercased())" || lower == assistant.lowercased() || lower == "hello" || lower.contains("hello \(assistant.lowercased())") || lower.contains("status") || lower.contains("who are you") || lower.contains("good morning") {
-            conversationState = .awaitingTopic
-            SpeechService.shared.speak(
-                text: "Hello \(user)! I am \(assistant), your personal research agent. What topic would you like me to research today?",
-                rate: SettingsStore.shared.voiceRate,
-                pitch: SettingsStore.shared.voicePitch
-            )
-            statusMessage = "Waiting for your research topic..."
-            liveTranscript = ""
-            return
-        }
-        
-        // 5. Explicit Research Request ("Jarvis research X", "Search for X", "Find X")
+        // 5. Explicit Autonomous Multi-Step Research Command ("Jarvis research X", "Search for X and create report")
         let explicitTopic = extractExplicitResearchTopic(from: command)
         if !explicitTopic.isEmpty {
             conversationState = .idle
@@ -385,7 +379,7 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
             return
         }
         
-        // 6. If we were awaiting a research topic after a greeting, treat this input as the topic!
+        // 6. If we were awaiting a research topic after a specific prompt, treat this input as the topic
         if conversationState == .awaitingTopic {
             let topic = cleanTopic(command)
             if !topic.isEmpty && topic.count > 2 {
@@ -396,21 +390,84 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
             }
         }
         
-        // 7. General Assistant query with assistant's name (e.g. "Jarvis ...")
-        if lower.contains(assistant.lowercased()) {
+        // 7. Conversational AI Intelligence (LLM Fast-Path for any question, chat, or talk)
+        respondConversationallyWithLLM(query: command, user: user, assistant: assistant)
+    }
+    
+    // MARK: - Conversational AI Fast-Path
+    private func respondConversationallyWithLLM(query: String, user: String, assistant: String) {
+        conversationState = .thinking
+        statusMessage = "\(assistant) is thinking..."
+        liveTranscript = ""
+        
+        // Check if API key is present
+        guard KeychainService.shared.hasKey(.openRouter) else {
+            conversationState = .idle
             SpeechService.shared.speak(
-                text: "I am ready, \(user). You can say 'Research' followed by a topic, or say 'Read briefing'.",
+                text: "Hello \(user), I heard you say: \(query). To enable conversational AI intelligence and deep research, please set your OpenRouter API key in Settings.",
                 rate: SettingsStore.shared.voiceRate,
                 pitch: SettingsStore.shared.voicePitch
             )
-            statusMessage = "Say 'Research [topic]' or 'Read briefing'."
-            liveTranscript = ""
+            statusMessage = "API Key not configured."
             return
         }
         
-        // Ambient room noise / unrecognized speech: do nothing and stay idle peacefully
-        logger.info("Ignoring ambient / non-command speech: '\(command)'")
-        liveTranscript = ""
+        activeLLMTask?.cancel()
+        activeLLMTask = Task {
+            let systemPrompt = """
+            You are \(assistant), an elite, intelligent, and articulate personal AI voice assistant created for \(user).
+            You speak in a natural, confident, calm, and concise tone.
+            Respond directly to the user's question or greeting in 1 to 3 natural conversational sentences suitable for voice synthesis.
+            Do NOT use markdown headers, asterisks, bullet points, emojis, code blocks, or URLs since your output is spoken directly aloud.
+            If the user asks you to do a full deep research report on a topic, suggest saying: "Research [topic]".
+            """
+            
+            // Append user query to history
+            var messages = self.chatHistory
+            messages.append(ChatMessage.user(query))
+            
+            do {
+                let options = GenerationOptions(temperature: 0.7, maxTokens: 160, timeoutSeconds: 20)
+                let result = try await OpenRouterProvider.shared.generate(
+                    system: systemPrompt,
+                    messages: messages,
+                    options: options
+                )
+                
+                guard !Task.isCancelled else { return }
+                
+                let reply = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !reply.isEmpty else { return }
+                
+                // Update short-term history (keep last 10 messages)
+                self.chatHistory.append(ChatMessage.user(query))
+                self.chatHistory.append(ChatMessage.assistant(reply))
+                if self.chatHistory.count > 10 {
+                    self.chatHistory.removeFirst(self.chatHistory.count - 10)
+                }
+                
+                self.conversationState = .idle
+                self.statusMessage = "\(assistant): \(reply.prefix(40))..."
+                
+                SpeechService.shared.speak(
+                    text: reply,
+                    rate: SettingsStore.shared.voiceRate,
+                    pitch: SettingsStore.shared.voicePitch
+                )
+            } catch {
+                guard !Task.isCancelled else { return }
+                self.conversationState = .idle
+                self.logger.error("Conversational LLM failed: \(error.localizedDescription)")
+                
+                // Natural fallback
+                SpeechService.shared.speak(
+                    text: "I heard your request, \(user), but encountered a temporary connection issue. Please try again in a moment.",
+                    rate: SettingsStore.shared.voiceRate,
+                    pitch: SettingsStore.shared.voicePitch
+                )
+                self.statusMessage = "Connection error: \(error.localizedDescription)"
+            }
+        }
     }
     
     private func triggerResearch(for topic: String, user: String) {
@@ -425,18 +482,38 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
     }
     
     public func extractExplicitResearchTopic(from text: String) -> String {
-        var clean = text
+        var clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        
         let prefixesToRemove = [
+            "search for and make a report on", "create a research report on",
+            "do a deep research on", "do a deep research about",
+            "deep research on", "deep research about",
             "hey jarvis, please research on", "hey jarvis please research on",
             "hey jarvis, research on", "hey jarvis research on",
             "hey jarvis, research", "hey jarvis research",
             "jarvis, please research on", "jarvis please research on",
             "jarvis, research on", "jarvis research on",
             "jarvis, research", "jarvis research",
-            "please research on", "please research", "research on", "research",
-            "search for", "search", "look up", "find out about", "find me information about",
-            "can you research on", "can you research", "tell me about"
+            "jarvis, search for", "jarvis search for",
+            "jarvis, search on", "jarvis search on",
+            "jarvis, search about", "jarvis search about",
+            "jarvis, find out about", "jarvis find out about",
+            "jarvis, look up", "jarvis look up",
+            "please research on", "please research",
+            "research on", "research about", "research",
+            "search for", "search about", "search on",
+            "find out about", "find out on",
+            "look up"
         ]
+        
+        // Remove leading assistant address if present
+        for address in ["hey jarvis,", "hey jarvis", "jarvis,", "jarvis", "hey,"] {
+            if clean.lowercased().hasPrefix(address) {
+                clean.removeFirst(address.count)
+                clean = clean.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ",:;-")))
+                break
+            }
+        }
         
         var matched = false
         for prefix in prefixesToRemove {
@@ -459,7 +536,7 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
     
     private func cleanTopic(_ text: String) -> String {
         var clean = text
-        let noiseWords = ["hey jarvis", "jarvis", "please", "assistant", "hey"]
+        let noiseWords = ["hey jarvis", "jarvis", "please", "assistant", "hey", "about", "for", "on"]
         for word in noiseWords {
             if let range = clean.range(of: word, options: [.caseInsensitive, .anchored]) {
                 clean.removeSubrange(range)
