@@ -72,6 +72,7 @@ public final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesize
         Task { @MainActor in
             self.isSpeaking = false
             self.logger.info("Speech finished.")
+            VoiceInputService.shared.onSpeechCompleted()
         }
     }
     
@@ -79,6 +80,7 @@ public final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesize
         Task { @MainActor in
             self.isSpeaking = false
             self.logger.info("Speech cancelled.")
+            VoiceInputService.shared.onSpeechCompleted()
         }
     }
     

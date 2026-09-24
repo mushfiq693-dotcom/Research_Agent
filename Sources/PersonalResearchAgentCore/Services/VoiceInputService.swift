@@ -11,13 +11,13 @@ final class AudioEngineManager: @unchecked Sendable {
     private let audioEngine = AVAudioEngine()
     private var isTapInstalled = false
     private let lock = NSLock()
-    private weak var currentRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var currentRequest: SFSpeechAudioBufferRecognitionRequest?
     
     var isRunning: Bool {
         audioEngine.isRunning
     }
     
-    func updateRequest(_ request: SFSpeechAudioBufferRecognitionRequest?) {
+    func setRequest(_ request: SFSpeechAudioBufferRecognitionRequest?) {
         lock.lock()
         self.currentRequest = request
         lock.unlock()
@@ -75,6 +75,7 @@ final class AudioEngineManager: @unchecked Sendable {
 // MARK: - Conversation State
 public enum VoiceConversationState: Equatable, Sendable {
     case idle
+    case listening
     case awaitingTopic
     case thinking
 }
@@ -97,6 +98,8 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
     @Published public private(set) var hasPermissions: Bool = false
     @Published public private(set) var conversationState: VoiceConversationState = .idle
     
+    private var activeTaskId: UUID = UUID()
+    private var isRefreshingStream: Bool = false
     private var silenceTimer: Task<Void, Never>?
     private var activeLLMTask: Task<Void, Never>?
     private var isProcessingCommand: Bool = false
@@ -160,12 +163,15 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
             }
             
             do {
-                try self.beginAudioSession()
                 self.isListening = true
+                self.conversationState = .listening
                 self.liveTranscript = ""
-                self.statusMessage = self.conversationState == .awaitingTopic ? "Listening for topic..." : "Listening for commands..."
-                self.logger.info("Voice recognition engine started.")
+                self.statusMessage = "Listening..."
+                try self.beginAudioSession()
+                self.logger.info("Voice recognition engine started successfully.")
             } catch {
+                self.isListening = false
+                self.conversationState = .idle
                 self.statusMessage = "Audio session error: \(error.localizedDescription)"
                 self.logger.error("Failed to start audio session: \(error.localizedDescription)")
                 self.cleanupAudioSession()
@@ -176,10 +182,13 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
     public func stopListening() {
         silenceTimer?.cancel()
         silenceTimer = nil
+        activeLLMTask?.cancel()
+        activeLLMTask = nil
         
         cleanupAudioSession()
         
         isListening = false
+        conversationState = .idle
         liveTranscript = ""
         statusMessage = "Voiceover paused."
         logger.info("Voice recognition stopped.")
@@ -193,10 +202,8 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
         }
     }
     
-    // MARK: - Safe Audio Session Setup & Continuous Recognition
+    // MARK: - Audio Session & Recognition Lifecycle
     private func beginAudioSession() throws {
-        cleanupAudioSession()
-        
         guard let recognizer = speechRecognizer, recognizer.isAvailable else {
             throw NSError(
                 domain: "VoiceInputService",
@@ -216,10 +223,14 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
     private func startRecognitionTask(with request: SFSpeechAudioBufferRecognitionRequest) {
         guard let recognizer = speechRecognizer, recognizer.isAvailable else { return }
         
-        recognitionTask?.cancel()
+        let taskId = UUID()
+        self.activeTaskId = taskId
+        
         recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
+                // Ignore stale/cancelled task callbacks
+                guard self.activeTaskId == taskId else { return }
                 
                 if let result = result {
                     let transcribedString = result.bestTranscription.formattedString
@@ -232,49 +243,59 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
                             SpeechService.shared.stopSpeaking()
                             self.activeLLMTask?.cancel()
                             self.activeLLMTask = nil
-                            self.conversationState = .idle
+                            self.conversationState = .listening
                             self.statusMessage = "Stopped."
                             self.liveTranscript = ""
-                            self.refreshRecognitionRequest()
+                            self.startFreshRecognitionStream()
                             return
                         }
                         
-                        // Discard speaker echo
-                        let lastSpoken = SpeechService.shared.lastSpokenText
-                        if !lastSpoken.isEmpty && (lower == lastSpoken || lastSpoken.contains(lower) || (lower.count > 10 && lastSpoken.contains(lower.prefix(15)))) {
-                            return
-                        }
+                        // Ignore assistant's own voice echo while speaking
+                        return
                     }
                     
+                    // 2. Normal User Speech Processing
                     self.liveTranscript = transcribedString
                     self.resetSilenceTimer(for: transcribedString)
                     
                     if result.isFinal {
-                        self.logger.info("Recognition task finalized. Refreshing stream for next phrase.")
-                        self.refreshRecognitionRequest()
+                        self.logger.info("Recognition task finalized. Preparing fresh stream.")
+                        self.startFreshRecognitionStream()
                     }
                 }
                 
                 if let error = error {
                     let nsError = error as NSError
-                    if nsError.domain != "kAFAssistantErrorDomain" || (nsError.code != 216 && nsError.code != 1110) {
-                        self.logger.warning("Recognition error: \(error.localizedDescription)")
+                    // Ignore normal cancellation errors (code 216)
+                    if nsError.domain == "kAFAssistantErrorDomain" && nsError.code == 216 {
+                        return
                     }
                     
-                    if self.isListening {
-                        self.refreshRecognitionRequest()
+                    self.logger.warning("Recognition stream error: \(error.localizedDescription) (code: \(nsError.code))")
+                    
+                    if self.isListening && !self.isRefreshingStream {
+                        self.scheduleStreamRestart()
                     }
                 }
             }
         }
     }
     
-    /// Seamlessly cycles the SFSpeechAudioBufferRecognitionRequest without restarting AVAudioEngine
-    private func refreshRecognitionRequest() {
-        guard isListening, let recognizer = speechRecognizer, recognizer.isAvailable else { return }
+    /// Seamlessly refreshes SFSpeechAudioBufferRecognitionRequest without stopping hardware audio engine
+    public func startFreshRecognitionStream() {
+        guard isListening, !isRefreshingStream, let recognizer = speechRecognizer, recognizer.isAvailable else { return }
+        isRefreshingStream = true
+        defer { isRefreshingStream = false }
+        
+        // Invalidate previous task ID to ignore its cancellation error
+        self.activeTaskId = UUID()
+        
+        // Detach request from audio tap
+        audioManager.setRequest(nil)
         
         recognitionRequest?.endAudio()
         recognitionRequest = nil
+        
         recognitionTask?.cancel()
         recognitionTask = nil
         
@@ -282,11 +303,21 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
         newRequest.shouldReportPartialResults = true
         self.recognitionRequest = newRequest
         
-        audioManager.updateRequest(newRequest)
+        audioManager.setRequest(newRequest)
         startRecognitionTask(with: newRequest)
     }
     
+    private func scheduleStreamRestart() {
+        guard isListening, !isRefreshingStream else { return }
+        Task {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled, self.isListening, !self.isRefreshingStream else { return }
+            self.startFreshRecognitionStream()
+        }
+    }
+    
     private func cleanupAudioSession() {
+        self.activeTaskId = UUID()
         audioManager.stop()
         
         recognitionRequest?.endAudio()
@@ -296,12 +327,28 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
         recognitionTask = nil
     }
     
+    // MARK: - Speech Service Callback
+    public func onSpeechCompleted() {
+        Task {
+            // Allow 400ms for room echo to dissipate after TTS speaker output stops
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard !Task.isCancelled, self.isListening else { return }
+            
+            self.liveTranscript = ""
+            if self.conversationState != .awaitingTopic {
+                self.conversationState = .listening
+                self.statusMessage = "Listening..."
+            }
+            self.startFreshRecognitionStream()
+        }
+    }
+    
     private func resetSilenceTimer(for text: String) {
         silenceTimer?.cancel()
         silenceTimer = Task {
             // Wait for 1.2 seconds of natural silence after speech
             try? await Task.sleep(nanoseconds: 1_200_000_000)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, !SpeechService.shared.isSpeaking else { return }
             
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return }
@@ -320,12 +367,12 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
         let user = SettingsStore.shared.userName
         let assistant = SettingsStore.shared.assistantName
         
-        // 0. Acoustic Echo Filter: Discard if recognizer simply picked up Jarvis's own utterance
+        // 0. Acoustic Echo Filter: Discard if recognizer simply picked up assistant's own speech
         let lastSpoken = SpeechService.shared.lastSpokenText
         if !lastSpoken.isEmpty && (lower == lastSpoken || (lastSpoken.count > 15 && lower.contains(lastSpoken.prefix(20)))) {
             logger.info("Discarding acoustic echo from assistant's own voice: '\(command)'")
             liveTranscript = ""
-            refreshRecognitionRequest()
+            startFreshRecognitionStream()
             return
         }
         
@@ -333,7 +380,7 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
         isProcessingCommand = true
         defer {
             isProcessingCommand = false
-            refreshRecognitionRequest()
+            startFreshRecognitionStream()
         }
         
         // 1. Stop / Quiet / Cancel Command
@@ -349,7 +396,7 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
                     pitch: SettingsStore.shared.voicePitch
                 )
             }
-            conversationState = .idle
+            conversationState = .listening
             statusMessage = "Stopped."
             liveTranscript = ""
             return
@@ -386,7 +433,7 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
         // 3. Open Reports Folder
         if lower.contains("open report") || lower.contains("open folder") || lower.contains("show report") || lower.contains("open directory") {
             AppState.shared.openReportsFolder()
-            conversationState = .idle
+            conversationState = .listening
             SpeechService.shared.speak(
                 text: "Opening your research reports folder, \(user).",
                 rate: SettingsStore.shared.voiceRate,
@@ -399,7 +446,7 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
         
         // 4. Read Latest Research Briefing
         if lower.contains("read report") || lower.contains("read briefing") || lower.contains("summarize report") || lower.contains("listen to report") || lower.contains("brief me") {
-            conversationState = .idle
+            conversationState = .listening
             if let reportPath = AppState.shared.lastReportPath ?? findLatestReportPath(),
                let md = try? String(contentsOfFile: reportPath, encoding: .utf8) {
                 SpeechService.shared.speakReportBriefing(
@@ -424,7 +471,7 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
         // 5. Explicit Autonomous Multi-Step Research Command ("Jarvis research X", "Search for X and create report")
         let explicitTopic = extractExplicitResearchTopic(from: command)
         if !explicitTopic.isEmpty {
-            conversationState = .idle
+            conversationState = .listening
             triggerResearch(for: explicitTopic, user: user)
             liveTranscript = ""
             return
@@ -434,7 +481,7 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
         if conversationState == .awaitingTopic {
             let topic = cleanTopic(command)
             if !topic.isEmpty && topic.count > 2 {
-                conversationState = .idle
+                conversationState = .listening
                 triggerResearch(for: topic, user: user)
                 liveTranscript = ""
                 return
@@ -453,7 +500,7 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
         
         // Check if API key is present
         guard KeychainService.shared.hasKey(.openRouter) else {
-            conversationState = .idle
+            conversationState = .listening
             SpeechService.shared.speak(
                 text: "Hello \(user), I heard you say: \(query). To enable conversational AI intelligence and deep research, please set your OpenRouter API key in Settings.",
                 rate: SettingsStore.shared.voiceRate,
@@ -486,13 +533,13 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
                 )
                 
                 guard !Task.isCancelled else {
-                    self.conversationState = .idle
+                    self.conversationState = .listening
                     return
                 }
                 
                 let reply = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 if reply.isEmpty {
-                    self.conversationState = .idle
+                    self.conversationState = .listening
                     self.statusMessage = "\(assistant) ready"
                     SpeechService.shared.speak(
                         text: "I didn't quite catch that, \(user). Could you repeat?",
@@ -509,7 +556,7 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
                     self.chatHistory.removeFirst(self.chatHistory.count - 8)
                 }
                 
-                self.conversationState = .idle
+                self.conversationState = .listening
                 self.statusMessage = "\(assistant): \(reply.prefix(40))..."
                 
                 SpeechService.shared.speak(
@@ -519,10 +566,10 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
                 )
             } catch {
                 guard !Task.isCancelled else {
-                    self.conversationState = .idle
+                    self.conversationState = .listening
                     return
                 }
-                self.conversationState = .idle
+                self.conversationState = .listening
                 self.logger.error("Conversational LLM failed: \(error.localizedDescription)")
                 
                 // Natural fallback
