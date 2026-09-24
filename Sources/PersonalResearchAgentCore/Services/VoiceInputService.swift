@@ -6,16 +6,33 @@ import OSLog
 
 // MARK: - Non-Actor Audio Engine Worker
 /// Encapsulates AVAudioEngine so real-time audio tap callbacks run on background audio queues
-/// without triggering Swift 6 @MainActor executor assertions.
+/// without triggering Swift 6 @MainActor executor assertions or audio session thrashing.
 final class AudioEngineManager: @unchecked Sendable {
     private let audioEngine = AVAudioEngine()
     private var isTapInstalled = false
+    private let lock = NSLock()
     private weak var currentRequest: SFSpeechAudioBufferRecognitionRequest?
     
-    func start(request: SFSpeechAudioBufferRecognitionRequest) throws {
+    var isRunning: Bool {
+        audioEngine.isRunning
+    }
+    
+    func updateRequest(_ request: SFSpeechAudioBufferRecognitionRequest?) {
+        lock.lock()
         self.currentRequest = request
-        let inputNode = audioEngine.inputNode
+        lock.unlock()
+    }
+    
+    func start(request: SFSpeechAudioBufferRecognitionRequest) throws {
+        lock.lock()
+        self.currentRequest = request
+        lock.unlock()
         
+        if audioEngine.isRunning && isTapInstalled {
+            return
+        }
+        
+        let inputNode = audioEngine.inputNode
         if isTapInstalled {
             inputNode.removeTap(onBus: 0)
             isTapInstalled = false
@@ -27,7 +44,11 @@ final class AudioEngineManager: @unchecked Sendable {
         let formatToUse: AVAudioFormat? = (inputFormat.sampleRate > 0 && inputFormat.channelCount > 0) ? inputFormat : nil
         
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: formatToUse) { [weak self] (buffer: AVAudioPCMBuffer, _: AVAudioTime) in
-            self?.currentRequest?.append(buffer)
+            guard let self = self else { return }
+            self.lock.lock()
+            let req = self.currentRequest
+            self.lock.unlock()
+            req?.append(buffer)
         }
         isTapInstalled = true
         
@@ -36,6 +57,10 @@ final class AudioEngineManager: @unchecked Sendable {
     }
     
     func stop() {
+        lock.lock()
+        currentRequest = nil
+        lock.unlock()
+        
         if audioEngine.isRunning {
             audioEngine.stop()
         }
@@ -44,7 +69,6 @@ final class AudioEngineManager: @unchecked Sendable {
             isTapInstalled = false
         }
         audioEngine.reset()
-        currentRequest = nil
     }
 }
 
@@ -74,7 +98,6 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
     @Published public private(set) var conversationState: VoiceConversationState = .idle
     
     private var silenceTimer: Task<Void, Never>?
-    private var restartTask: Task<Void, Never>?
     private var activeLLMTask: Task<Void, Never>?
     private var isProcessingCommand: Bool = false
     
@@ -128,12 +151,6 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
     public func startListening() {
         guard !isListening else { return }
         
-        // Never start listening while Jarvis is actively speaking
-        if SpeechService.shared.isSpeaking {
-            logger.info("Speech is active. Voice listening will resume after speech completes.")
-            return
-        }
-        
         Task {
             let authorized = await requestPermissions()
             guard authorized else {
@@ -159,8 +176,6 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
     public func stopListening() {
         silenceTimer?.cancel()
         silenceTimer = nil
-        restartTask?.cancel()
-        restartTask = nil
         
         cleanupAudioSession()
         
@@ -178,7 +193,7 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
         }
     }
     
-    // MARK: - Safe Audio Session Setup
+    // MARK: - Safe Audio Session Setup & Continuous Recognition
     private func beginAudioSession() throws {
         cleanupAudioSession()
         
@@ -195,20 +210,49 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
         self.recognitionRequest = request
         
         try audioManager.start(request: request)
+        startRecognitionTask(with: request)
+    }
+    
+    private func startRecognitionTask(with request: SFSpeechAudioBufferRecognitionRequest) {
+        guard let recognizer = speechRecognizer, recognizer.isAvailable else { return }
         
+        recognitionTask?.cancel()
         recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
                 
-                // If speech output started while buffer arrived, ignore
-                if SpeechService.shared.isSpeaking {
-                    return
-                }
-                
                 if let result = result {
                     let transcribedString = result.bestTranscription.formattedString
+                    let lower = transcribedString.lowercased()
+                    
+                    // 1. Instant Barge-In / Interruption Detection while Jarvis is speaking
+                    if SpeechService.shared.isSpeaking {
+                        if lower.contains("stop") || lower.contains("cancel") || lower.contains("quiet") || lower.contains("shut up") || lower.contains("pause") || lower.contains("halt") || lower.contains("hold on") {
+                            self.logger.info("Voice barge-in 'Stop' detected while assistant was speaking: '\(transcribedString)'")
+                            SpeechService.shared.stopSpeaking()
+                            self.activeLLMTask?.cancel()
+                            self.activeLLMTask = nil
+                            self.conversationState = .idle
+                            self.statusMessage = "Stopped."
+                            self.liveTranscript = ""
+                            self.refreshRecognitionRequest()
+                            return
+                        }
+                        
+                        // Discard speaker echo
+                        let lastSpoken = SpeechService.shared.lastSpokenText
+                        if !lastSpoken.isEmpty && (lower == lastSpoken || lastSpoken.contains(lower) || (lower.count > 10 && lastSpoken.contains(lower.prefix(15)))) {
+                            return
+                        }
+                    }
+                    
                     self.liveTranscript = transcribedString
                     self.resetSilenceTimer(for: transcribedString)
+                    
+                    if result.isFinal {
+                        self.logger.info("Recognition task finalized. Refreshing stream for next phrase.")
+                        self.refreshRecognitionRequest()
+                    }
                 }
                 
                 if let error = error {
@@ -217,12 +261,29 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
                         self.logger.warning("Recognition error: \(error.localizedDescription)")
                     }
                     
-                    if self.isListening && !SpeechService.shared.isSpeaking {
-                        self.restartListeningAfterDelay()
+                    if self.isListening {
+                        self.refreshRecognitionRequest()
                     }
                 }
             }
         }
+    }
+    
+    /// Seamlessly cycles the SFSpeechAudioBufferRecognitionRequest without restarting AVAudioEngine
+    private func refreshRecognitionRequest() {
+        guard isListening, let recognizer = speechRecognizer, recognizer.isAvailable else { return }
+        
+        recognitionRequest?.endAudio()
+        recognitionRequest = nil
+        recognitionTask?.cancel()
+        recognitionTask = nil
+        
+        let newRequest = SFSpeechAudioBufferRecognitionRequest()
+        newRequest.shouldReportPartialResults = true
+        self.recognitionRequest = newRequest
+        
+        audioManager.updateRequest(newRequest)
+        startRecognitionTask(with: newRequest)
     }
     
     private func cleanupAudioSession() {
@@ -235,26 +296,12 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
         recognitionTask = nil
     }
     
-    private func restartListeningAfterDelay() {
-        guard SettingsStore.shared.isVoiceControlEnabled else {
-            stopListening()
-            return
-        }
-        
-        restartTask?.cancel()
-        restartTask = Task {
-            try? await Task.sleep(nanoseconds: 800_000_000)
-            guard !Task.isCancelled, SettingsStore.shared.isVoiceControlEnabled, !SpeechService.shared.isSpeaking else { return }
-            self.startListening()
-        }
-    }
-    
     private func resetSilenceTimer(for text: String) {
         silenceTimer?.cancel()
         silenceTimer = Task {
-            // Wait for 1.3 seconds of natural silence after speech
-            try? await Task.sleep(nanoseconds: 1_300_000_000)
-            guard !Task.isCancelled, !SpeechService.shared.isSpeaking else { return }
+            // Wait for 1.2 seconds of natural silence after speech
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard !Task.isCancelled else { return }
             
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return }
@@ -273,17 +320,21 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
         let user = SettingsStore.shared.userName
         let assistant = SettingsStore.shared.assistantName
         
-        // 0. Acoustic Echo Filter: Discard if recognizer simply picked up Jarvis's own last utterance
+        // 0. Acoustic Echo Filter: Discard if recognizer simply picked up Jarvis's own utterance
         let lastSpoken = SpeechService.shared.lastSpokenText
         if !lastSpoken.isEmpty && (lower == lastSpoken || (lastSpoken.count > 15 && lower.contains(lastSpoken.prefix(20)))) {
             logger.info("Discarding acoustic echo from assistant's own voice: '\(command)'")
             liveTranscript = ""
+            refreshRecognitionRequest()
             return
         }
         
         logger.info("Processing voice command: '\(command)' (state: \(String(describing: self.conversationState)))")
         isProcessingCommand = true
-        defer { isProcessingCommand = false }
+        defer {
+            isProcessingCommand = false
+            refreshRecognitionRequest()
+        }
         
         // 1. Stop / Quiet / Cancel Command
         if lower.contains("stop") || lower.contains("quiet") || lower.contains("shut up") || lower.contains("pause") || lower == "cancel" {
@@ -299,7 +350,7 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
                 )
             }
             conversationState = .idle
-            statusMessage = "Voice output stopped."
+            statusMessage = "Stopped."
             liveTranscript = ""
             return
         }
@@ -427,23 +478,35 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
             messages.append(ChatMessage.user(query))
             
             do {
-                let options = GenerationOptions(temperature: 0.7, maxTokens: 160, timeoutSeconds: 20)
+                let options = GenerationOptions(temperature: 0.7, maxTokens: 160, timeoutSeconds: 15)
                 let result = try await OpenRouterProvider.shared.generate(
                     system: systemPrompt,
                     messages: messages,
                     options: options
                 )
                 
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled else {
+                    self.conversationState = .idle
+                    return
+                }
                 
                 let reply = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !reply.isEmpty else { return }
+                if reply.isEmpty {
+                    self.conversationState = .idle
+                    self.statusMessage = "\(assistant) ready"
+                    SpeechService.shared.speak(
+                        text: "I didn't quite catch that, \(user). Could you repeat?",
+                        rate: SettingsStore.shared.voiceRate,
+                        pitch: SettingsStore.shared.voicePitch
+                    )
+                    return
+                }
                 
-                // Update short-term history (keep last 10 messages)
+                // Update short-term history (keep last 8 messages)
                 self.chatHistory.append(ChatMessage.user(query))
                 self.chatHistory.append(ChatMessage.assistant(reply))
-                if self.chatHistory.count > 10 {
-                    self.chatHistory.removeFirst(self.chatHistory.count - 10)
+                if self.chatHistory.count > 8 {
+                    self.chatHistory.removeFirst(self.chatHistory.count - 8)
                 }
                 
                 self.conversationState = .idle
@@ -455,13 +518,16 @@ public final class VoiceInputService: NSObject, ObservableObject, SFSpeechRecogn
                     pitch: SettingsStore.shared.voicePitch
                 )
             } catch {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled else {
+                    self.conversationState = .idle
+                    return
+                }
                 self.conversationState = .idle
                 self.logger.error("Conversational LLM failed: \(error.localizedDescription)")
                 
                 // Natural fallback
                 SpeechService.shared.speak(
-                    text: "I heard your request, \(user), but encountered a temporary connection issue. Please try again in a moment.",
+                    text: "I heard you, \(user), but encountered a momentary network issue. Please ask again.",
                     rate: SettingsStore.shared.voiceRate,
                     pitch: SettingsStore.shared.voicePitch
                 )

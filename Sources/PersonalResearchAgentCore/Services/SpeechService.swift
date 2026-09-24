@@ -22,8 +22,6 @@ public final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesize
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         
-        // Mute voice input while assistant speaks to prevent acoustic self-triggering
-        VoiceInputService.shared.stopListening()
         lastSpokenText = trimmed.lowercased()
         
         if synthesizer.isSpeaking {
@@ -74,12 +72,6 @@ public final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesize
         Task { @MainActor in
             self.isSpeaking = false
             self.logger.info("Speech finished.")
-            if SettingsStore.shared.isVoiceControlEnabled {
-                // Wait 600ms cooldown for speaker echo to dissipate before resuming mic
-                try? await Task.sleep(nanoseconds: 600_000_000)
-                guard !self.isSpeaking, SettingsStore.shared.isVoiceControlEnabled else { return }
-                VoiceInputService.shared.startListening()
-            }
         }
     }
     
@@ -87,11 +79,6 @@ public final class SpeechService: NSObject, ObservableObject, AVSpeechSynthesize
         Task { @MainActor in
             self.isSpeaking = false
             self.logger.info("Speech cancelled.")
-            if SettingsStore.shared.isVoiceControlEnabled {
-                try? await Task.sleep(nanoseconds: 600_000_000)
-                guard !self.isSpeaking, SettingsStore.shared.isVoiceControlEnabled else { return }
-                VoiceInputService.shared.startListening()
-            }
         }
     }
     
